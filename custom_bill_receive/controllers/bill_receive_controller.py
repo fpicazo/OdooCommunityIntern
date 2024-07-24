@@ -13,7 +13,7 @@ class BillReceiveController(http.Controller):
         for bill_data in bills_data:
             request.env['account.move'].sudo().create({
                 'name': bill_data['name'],
-                'amount_total': bill_data['amount_total'],
+                'amount_total': bill_data['amount_total'], 
                 'folio_fiscal': bill_data['folio_fiscal'],
                 # Add more fields as needed
             })
