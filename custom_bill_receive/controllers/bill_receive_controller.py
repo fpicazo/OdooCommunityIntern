@@ -1,15 +1,14 @@
-import json
 from odoo import http
 from odoo.http import request
+import json 
 
 class BillReceiveController(http.Controller):
 
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
-    def receive_bills(self):
-        if not request.jsonrequest:
-            return {'error': 'No bills data received'}
-
-        bills_data = request.jsonrequest.get('bills')
+    def receive_bills(self, **kwargs):
+        data = json.loads(request.httprequest.data.decode('utf-8'))
+        bills_data = data.get('bills', [])
+        
         if not bills_data:
             return {'error': 'No bills data received'}
 
