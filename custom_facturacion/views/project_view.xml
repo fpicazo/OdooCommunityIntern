@@ -1,10 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <record id="view_project_form_inherit" model="ir.ui.view">
-        <field name="name">project.form.inherit</field>
+    <record id="view_project_form_inherited" model="ir.ui.view">
+        <field name="name">project.form.inherited</field>
         <field name="model">project.project</field>
         <field name="inherit_id" ref="project.edit_project"/>
         <field name="arch" type="xml">
-            <xpath expr="//sheet//group" position="inside">
+            <xpath expr="//sheet" position="inside">
                 <group>
                     <field name="solucion_elegida"/>
                     <field name="tipo_de_proyecto"/>

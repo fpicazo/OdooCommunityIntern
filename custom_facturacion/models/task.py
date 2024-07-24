@@ -1,6 +1,6 @@
 from odoo import models, fields
 
-class Task(models.Model):
+class ProjectTask(models.Model):
     _inherit = 'project.task'
 
     tipo_de_tarea = fields.Selection([
