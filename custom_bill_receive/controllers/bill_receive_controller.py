@@ -6,6 +6,9 @@ class BillReceiveController(http.Controller):
 
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_bills(self):
+        if not request.jsonrequest:
+            return {'error': 'No bills data received'}
+
         bills_data = request.jsonrequest.get('bills')
         if not bills_data:
             return {'error': 'No bills data received'}
@@ -18,4 +21,4 @@ class BillReceiveController(http.Controller):
                 # Add more fields as needed
             })
 
-        return {'success': 'Bills received and created successfully'} 
+        return {'success': 'Bills received and created successfully'}
