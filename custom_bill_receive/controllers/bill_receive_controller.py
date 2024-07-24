@@ -18,4 +18,4 @@ class BillReceiveController(http.Controller):
                 # Add more fields as needed
             })
 
-        return {'success': 'Bills received and created successfully'}
+        return {'success': 'Bills received and created successfully'} 
