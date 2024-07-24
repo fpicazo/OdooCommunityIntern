@@ -11,6 +11,7 @@
         'views/product_template_views.xml',
         'views/account_move_views.xml',
         'views/project_view.xml',
+        'views/task_view.xml',
     ],
     'installable': True,
     'application': False,

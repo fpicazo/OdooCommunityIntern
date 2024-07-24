@@ -1,6 +1,6 @@
 from odoo import models, fields
 
-class ProjectProject(models.Model):
+class Project(models.Model):
     _inherit = 'project.project'
 
     solucion_elegida = fields.Selection([
