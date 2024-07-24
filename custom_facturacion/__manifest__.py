@@ -5,7 +5,7 @@
     'summary': 'Facturacion Mexicana',
     'author': 'Flavien Picazo',
     'category': 'Accounting',
-    'depends': ['account', 'product','project','sale'],
+    'depends': ['account', 'product','project','sale','hr'],
     'data': [
         'views/res_partner_views.xml',
         'views/product_template_views.xml',
@@ -13,6 +13,7 @@
         'views/project_view.xml',
         'views/task_view.xml',
         'views/sale_order_view.xml',
+        'views/hr_employee_view.xml',
     ],
     'installable': True,
     'application': False,
