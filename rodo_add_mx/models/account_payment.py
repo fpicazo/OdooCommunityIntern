@@ -2,7 +2,7 @@
 
 from odoo import models, fields, api, Command, _
 DEFAULT_CFDI_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
-
+ 
 class AccountPayment(models.Model):
     _inherit = 'account.payment'
 
