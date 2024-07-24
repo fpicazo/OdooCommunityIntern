@@ -18,9 +18,18 @@ class BillReceiveController(http.Controller):
             for bill_data in bills_data:
                 try:
                     bill = request.env['account.move'].sudo().create({
+                        'move_type': 'in_invoice',  # Specify the type of move, e.g., 'in_invoice' for supplier bills
+                        'journal_id': 1,  # Specify the journal ID, ensure this is a valid journal ID
+                        'state': 'draft',  # Set the state to draft or posted as needed
                         'name': bill_data['name'],
                         'amount_total': bill_data['amount_total'],
                         'folio_fiscal': bill_data['folio_fiscal'],
+                        'invoice_line_ids': [(0, 0, {  # Add at least one line item
+                            'name': 'Sample Product',  # Replace with actual product/service name
+                            'quantity': 1,
+                            'price_unit': bill_data['amount_total'],
+                            'account_id': 41,  # Replace with an actual account ID
+                        })],
                         # Add more fields as needed
                     })
                     created_bills.append(bill.id)
