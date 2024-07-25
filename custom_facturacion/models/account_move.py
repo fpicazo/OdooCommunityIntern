@@ -39,9 +39,13 @@ class AccountMove(models.Model):
         ('CN01', 'Nómina')
     ], string='Uso CFDI')
 
+    folio_fiscal = fields.Char(string="Folio Fiscal")
+
     state = fields.Selection(selection_add=[
         ('timbrado', 'Timbrado')
     ], ondelete={'timbrado': 'set default'})
+
+
 
 
     def action_custom_button(self):

@@ -17,6 +17,16 @@ class BillReceiveController(http.Controller):
             errors = []
             for bill_data in bills_data:
                 try:
+
+                    partner = request.env['res.partner'].sudo().search([('name', '=', bill_data['partner_id']['name']), ('vat', '=', bill_data['partner_id']['vat'])], limit=1)
+                    if not partner:
+                        partner = request.env['res.partner'].sudo().create({
+                            'name': bill_data['partner_id']['name'],
+                            'vat': bill_data['partner_id']['vat'],
+                            'supplier_rank': 1,  # Ensure it's marked as a vendor
+                        })
+
+
                     bill = request.env['account.move'].sudo().create({
                         'move_type': 'in_invoice',  # Specify the type of move, e.g., 'in_invoice' for supplier bills
                         'journal_id': 1,  # Specify the journal ID, ensure this is a valid journal ID
@@ -24,6 +34,8 @@ class BillReceiveController(http.Controller):
                         'name': bill_data['name'],
                         'amount_total': bill_data['amount_total'],
                         'folio_fiscal': bill_data['folio_fiscal'],
+                        'invoice_date': bill_data['invoice_date'],
+                        'partner_id': partner.id,  # Set the vendor
                         'invoice_line_ids': [(0, 0, {  # Add at least one line item
                             'name': 'Sample Product',  # Replace with actual product/service name
                             'quantity': 1,
