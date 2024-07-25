@@ -57,3 +57,57 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to process the request',
                 'details': str(e)
             }
+
+    @http.route('/api/receive_invoices', type='json', auth='public', methods=['POST'], csrf=False)
+    def receive_invoices(self, **kwargs):
+        try:
+            data = json.loads(request.httprequest.data.decode('utf-8'))
+            invoices_data = data.get('invoices', [])
+
+            if not invoices_data:
+                return {'error': 'No invoices data received'}
+
+            created_invoices = []
+            errors = []
+            for invoice_data in invoices_data:
+                try:
+                    # Find or create customer
+                    partner = request.env['res.partner'].sudo().search([('name', '=', invoice_data['partner_id']['name']), ('vat', '=', invoice_data['partner_id']['vat'])], limit=1)
+                    if not partner:
+                        partner = request.env['res.partner'].sudo().create({
+                            'name': invoice_data['partner_id']['name'],
+                            'vat': invoice_data['partner_id']['vat'],
+                            'customer_rank': 1,  # Ensure it's marked as a customer
+                        })
+
+                    invoice = request.env['account.move'].sudo().create({
+                        'move_type': invoice_data['move_type'],  # Specify the type of move
+                        'journal_id': invoice_data['journal_id'],  # Ensure this is a valid journal ID
+                        'state': 'draft',  # Set the state to draft or posted as needed
+                        'name': invoice_data['name'],
+                        'amount_total': invoice_data['amount_total'],
+                        'folio_fiscal': invoice_data['folio_fiscal'],
+                        'invoice_date': invoice_data['invoice_date'],  # Date already in string format
+                        'partner_id': partner.id,  # Set the customer
+                        'invoice_line_ids': [(0, 0, {
+                            'name': line['name'],
+                            'quantity': line['quantity'],
+                            'price_unit': line['price_unit'],
+                            'account_id': line['account_id'],
+                        }) for line in invoice_data['invoice_line_ids']],
+                        # Add more fields as needed
+                    })
+                    created_invoices.append(invoice.id)
+                except Exception as e:
+                    errors.append({'invoice_data': invoice_data, 'error': str(e)})
+
+            return {
+                'success': 'Invoices processed',
+                'created_invoices': created_invoices,
+                'errors': errors
+            }
+        except Exception as e:
+            return {
+                'error': 'Failed to process the request',
+                'details': str(e)
+            }
