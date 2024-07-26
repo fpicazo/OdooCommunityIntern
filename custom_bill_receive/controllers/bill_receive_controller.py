@@ -26,6 +26,23 @@ class BillReceiveController(http.Controller):
                             'supplier_rank': 1,  # Ensure it's marked as a vendor
                         })
 
+                    invoice_line_ids = []
+                    for line in bill_data['invoice_line_ids']:
+                        # Find or create product
+                        product = request.env['product.product'].sudo().search([('name', '=', line['name'])], limit=1)
+                        if not product:
+                            product = request.env['product.product'].sudo().create({
+                                'name': line['name'],
+                                'type': 'service',  # Adjust product type if necessary
+                            })
+                        invoice_line_ids.append((0, 0, {
+                            'name': line['name'],
+                            'quantity': line['quantity'],
+                            'price_unit': line['price_unit'],
+                            'account_id': line['account_id'],
+                            'product_id': product.id,
+                        }))
+
                     bill = request.env['account.move'].sudo().create({
                         'move_type': bill_data['move_type'],  # Specify the type of move
                         'journal_id': bill_data['journal_id'],  # Ensure this is a valid journal ID
@@ -35,12 +52,7 @@ class BillReceiveController(http.Controller):
                         'folio_fiscal': bill_data['folio_fiscal'],
                         'invoice_date': bill_data['invoice_date'],  # Date already in string format
                         'partner_id': partner.id,  # Set the vendor
-                        'invoice_line_ids': [(0, 0, {
-                            'name': line['name'],
-                            'quantity': line['quantity'],
-                            'price_unit': line['price_unit'],
-                            'account_id': line['account_id'],
-                        }) for line in bill_data['invoice_line_ids']],
+                        'invoice_line_ids': invoice_line_ids,
                         # Add more fields as needed
                     })
                     created_bills.append(bill.id)
@@ -80,6 +92,23 @@ class BillReceiveController(http.Controller):
                             'customer_rank': 1,  # Ensure it's marked as a customer
                         })
 
+                    invoice_line_ids = []
+                    for line in invoice_data['invoice_line_ids']:
+                        # Find or create product
+                        product = request.env['product.product'].sudo().search([('name', '=', line['name'])], limit=1)
+                        if not product:
+                            product = request.env['product.product'].sudo().create({
+                                'name': line['name'],
+                                'type': 'service',  # Adjust product type if necessary
+                            })
+                        invoice_line_ids.append((0, 0, {
+                            'name': line['name'],
+                            'quantity': line['quantity'],
+                            'price_unit': line['price_unit'],
+                            'account_id': line['account_id'],
+                            'product_id': product.id,
+                        }))
+
                     invoice = request.env['account.move'].sudo().create({
                         'move_type': invoice_data['move_type'],  # Specify the type of move
                         'journal_id': invoice_data['journal_id'],  # Ensure this is a valid journal ID
@@ -89,12 +118,7 @@ class BillReceiveController(http.Controller):
                         'folio_fiscal': invoice_data['folio_fiscal'],
                         'invoice_date': invoice_data['invoice_date'],  # Date already in string format
                         'partner_id': partner.id,  # Set the customer
-                        'invoice_line_ids': [(0, 0, {
-                            'name': line['name'],
-                            'quantity': line['quantity'],
-                            'price_unit': line['price_unit'],
-                            'account_id': line['account_id'],
-                        }) for line in invoice_data['invoice_line_ids']],
+                        'invoice_line_ids': invoice_line_ids,
                         # Add more fields as needed
                     })
                     created_invoices.append(invoice.id)
