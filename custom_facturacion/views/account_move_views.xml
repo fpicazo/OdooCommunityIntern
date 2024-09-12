@@ -17,7 +17,7 @@
                             invisible = "state != 'posted'"/>
                    
                 </xpath>
-                <xpath expr="//sheet/group" position="inside">
+                <xpath expr="//field[@name='partner_id']" position="after">
                     <field name="modo_pago"/>
                     <field name="uso_cfdi"/>
                     <field name="payment_method"/>
