@@ -63,8 +63,8 @@ class AccountMove(models.Model):
                 "Rfc": record.partner_id.vat or "",
                 "Nombre": record.partner_id.name or "",
                 "DomicilioFiscalReceptor": record.partner_id.zip or "",
-                "RegimenFiscalReceptor": record.partner_id.l10n_mx_edi_fiscal_regime or "",
-                "UsoCFDI": record.partner_id.l10n_mx_edi_usage or ""
+                "RegimenFiscalReceptor": record.partner_id.regimen_fiscal or "",
+                "UsoCFDI": record.record.uso_cfdi or ""
             }
             
             conceptos = []
