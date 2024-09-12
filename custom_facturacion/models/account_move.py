@@ -168,7 +168,7 @@ class AccountMove(models.Model):
                     "Importe": str(line.price_subtotal),
                     "Descuento": "0.00",
                     "ObjetoImp": "02",
-                    "Impuestos": impuestos
+                    "Impuestos": impuestos_data_concepto
                 })
 
             # Construct the Impuestos dictionary, adding Retenciones only if it's not empty
