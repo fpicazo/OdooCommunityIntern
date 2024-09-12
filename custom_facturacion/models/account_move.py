@@ -210,7 +210,7 @@ class AccountMove(models.Model):
                 'mimetype': 'application/json',
             })
             # API Call to External Service
-            url = "https://services.test.sw.com.mx/v4/cfdi33/issue/json/v1"
+            url = "https://services.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
                 'Authorization': token,
                 'Content-Type': 'application/jsontoxml'
