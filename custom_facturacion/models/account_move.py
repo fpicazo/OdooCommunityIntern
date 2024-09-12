@@ -140,7 +140,7 @@ class AccountMove(models.Model):
             
             json_data = {
                 "Version": "4.0",
-                "FormaPago": record.payment_method.code or "01",
+                "FormaPago": record.payment_method or "01",
                 "Serie": "SW",
                 "Folio": record.name.split()[-1],
                 "Fecha": record.invoice_date.strftime("%Y-%m-%dT%H:%M:%S"),
