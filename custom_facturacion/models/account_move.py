@@ -186,7 +186,7 @@ class AccountMove(models.Model):
                 'res_id': record.id,
                 'mimetype': 'application/json',
             })
-
+            """
             # API Call to External Service
             url = "https://services.test.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
@@ -215,7 +215,7 @@ class AccountMove(models.Model):
 
             # Move the invoice to the next stage (e.g., 'posted')
             #record.state = 'timbrado'
-
+ """
             # Refresh the view to reflect changes
             return {
                 'type': 'ir.actions.client',
