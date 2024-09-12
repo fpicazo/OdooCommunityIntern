@@ -6,7 +6,7 @@
         <field name="inherit_id" ref="base.view_company_form"/>
         <field name="arch" type="xml">
             <!-- Adding the field to the company form inside the 'company_details' group -->
-            <xpath expr="//group[@name='company_details']" position="inside">
+            <xpath expr="//field[@name='currency_id']" position="after">
                 <field name="l10n_mx_edi_fiscal_regime" />
             </xpath>
         </field>
