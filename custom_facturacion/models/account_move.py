@@ -74,6 +74,10 @@ class AccountMove(models.Model):
         ('timbrado', 'Timbrado')
     ], ondelete={'timbrado': 'set default'})
 
+    def format_decimal(value, precision=2):
+        """Helper function to format decimal values with a fixed number of decimal places."""
+        return f"{value:.{precision}f}"
+
     def action_custom_button(self):
         for record in self:
             if record.state != 'posted':
@@ -116,8 +120,8 @@ class AccountMove(models.Model):
             }
 
             conceptos = []
-            total_traslados = 0.0
-            total_retenciones = 0.0
+            total_traslados = 0.00
+            total_retenciones = 0.00
             traslados = []
             retenciones = []
 
@@ -131,8 +135,8 @@ class AccountMove(models.Model):
                 for tax in line.tax_ids:
                     if tax.amount > 0:
                         impuestos["Traslados"].append({
-                            "Base": str(line.price_subtotal),
-                            "Importe": str(line.price_subtotal * tax.amount / 100),
+                            "Base": format_decimal(line.price_subtotal),
+                            "Importe": format_decimal(line.price_subtotal * tax.amount / 100),
                             "Impuesto": "002",
                             "TasaOCuota": str(tax.amount / 100),
                             "TipoFactor": "Tasa"
@@ -141,8 +145,8 @@ class AccountMove(models.Model):
                         traslados.append(impuestos["Traslados"][-1])
                     else:
                         impuestos["Retenciones"].append({
-                            "Base": str(line.price_subtotal),
-                            "Importe": str(-line.price_subtotal * tax.amount / 100),
+                            "Base": format_decimal(line.price_subtotal),
+                            "Importe": format_decimal(-line.price_subtotal * tax.amount / 100),
                             "Impuesto": "002",
                             "TasaOCuota": str(-tax.amount / 100),
                             "TipoFactor": "Tasa"
@@ -158,15 +162,15 @@ class AccountMove(models.Model):
                     impuestos_data_concepto["Traslados"] = traslados
 
                 conceptos.append({
-                    "ClaveProdServ": line.product_id.sat_unit_code or "",
-                    "NoIdentificacion": line.product_id.sat_code_product or "None",
-                    "Cantidad": str(line.quantity),
+                    "ClaveProdServ": line.product_id.sat_code_product or "", 
+                    "NoIdentificacion": line.product_id.sat_unit_code or "None",
+                    "Cantidad": format_decimal(line.quantity),
                     "ClaveUnidad": "E48",
                     "Unidad": line.product_uom_id.name or "Pieza",
                     "Descripcion": line.name or "",
-                    "ValorUnitario": str(line.price_unit),
-                    "Importe": str(line.price_subtotal),
-                    "Descuento": "0.00",
+                    "ValorUnitario": format_decimal(line.price_unit),
+                    "Importe": format_decimal(line.price_subtotal),
+                    "Descuento": format_decimal(0.00),
                     "ObjetoImp": "02",
                     "Impuestos": impuestos_data_concepto
                 })
