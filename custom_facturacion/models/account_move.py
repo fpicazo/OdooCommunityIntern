@@ -169,7 +169,7 @@ class AccountMove(models.Model):
             }
 
             # Only include Retenciones if there are retentions
-            if retenciones:
+            if len(retenciones) > 0:
                 impuestos_data["Retenciones"] = retenciones
                 impuestos_data["TotalImpuestosRetenidos"] = str(total_retenciones)
 
@@ -232,8 +232,13 @@ class AccountMove(models.Model):
                 })
 
             except requests.exceptions.HTTPError as e:
-                raise UserError(_("Error in API call: %s") % str(e))
+                # If an error occurs, try to extract 'messageDetail' from the response
+                try:
+                    error_message = response.json().get('messageDetail', str(e))
+                except Exception:
+                    error_message = str(e)
 
+                raise UserError(_("Error in API call: %s") % error_message)
             # Move the invoice to the next stage (e.g., 'posted')
             #record.state = 'timbrado'
         
