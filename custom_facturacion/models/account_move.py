@@ -126,6 +126,8 @@ class AccountMove(models.Model):
                     "Traslados": [],
                     "Retenciones": []
                 }
+                impuestos_data_concepto = {}
+
                 for tax in line.tax_ids:
                     if tax.amount > 0:
                         impuestos["Traslados"].append({
@@ -147,6 +149,13 @@ class AccountMove(models.Model):
                         })
                         total_retenciones += -line.price_subtotal * tax.amount / 100
                         retenciones.append(impuestos["Retenciones"][-1])
+
+
+                if len(retenciones) > 0:
+                    impuestos_data_concepto["Retenciones"] = retenciones
+
+                if len(traslados) > 0:
+                    impuestos_data_concepto["Traslados"] = traslados
 
                 conceptos.append({
                     "ClaveProdServ": line.product_id.sat_unit_code or "",
