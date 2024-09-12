@@ -177,6 +177,16 @@ class AccountMove(models.Model):
 
             json_str = json.dumps(json_data, ensure_ascii=False)
 
+            # Save the generated JSON as an attachment in the Odoo record
+            attachment = self.env['ir.attachment'].create({
+                'name': f'{record.name}_factura_fiscal.json',
+                'type': 'binary',
+                'datas': base64.b64encode(json_str.encode('utf-8')),
+                'res_model': 'account.move',
+                'res_id': record.id,
+                'mimetype': 'application/json',
+            })
+
             # API Call to External Service
             url = "https://services.test.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
@@ -204,7 +214,7 @@ class AccountMove(models.Model):
                 raise UserError(_("Error in API call: %s") % str(e))
 
             # Move the invoice to the next stage (e.g., 'posted')
-            record.state = 'timbrado'
+            #record.state = 'timbrado'
 
             # Refresh the view to reflect changes
             return {
