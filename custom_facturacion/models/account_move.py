@@ -14,6 +14,30 @@ class AccountMove(models.Model):
         ('PPD', 'PPD')
     ], string='Modo de Pago')
 
+    payment_method = fields.Selection([
+    ('01', 'Efectivo'),
+    ('02', 'Cheque nominativo'),
+    ('03', 'Transferencia electrónica de fondos'),
+    ('04', 'Tarjeta de crédito'),
+    ('05', 'Monedero electrónico'),
+    ('06', 'Dinero electrónico'),
+    ('08', 'Vales de despensa'),
+    ('12', 'Dación en pago'),
+    ('13', 'Pago por subrogación'),
+    ('14', 'Pago por consignación'),
+    ('15', 'Condonación'),
+    ('17', 'Compensación'),
+    ('23', 'Novación'),
+    ('24', 'Confusión'),
+    ('25', 'Remisión de deuda'),
+    ('26', 'Prescripción o caducidad'),
+    ('27', 'A satisfacción del acreedor'),
+    ('28', 'Tarjeta de débito'),
+    ('29', 'Tarjeta de servicios'),
+    ('30', 'Aplicación de anticipos'),
+    ('99', 'Por definir')
+], string='Método de Pago')
+
     uso_cfdi = fields.Selection([
         ('G01', 'Adquisición de mercancías'),
         ('G02', 'Devoluciones, descuentos o bonificaciones'),
@@ -116,7 +140,7 @@ class AccountMove(models.Model):
             
             json_data = {
                 "Version": "4.0",
-                "FormaPago": record.l10n_mx_edi_payment_method_id.code or "01",
+                "FormaPago": record.payment_method.code or "01",
                 "Serie": "SW",
                 "Folio": record.name.split()[-1],
                 "Fecha": record.invoice_date.strftime("%Y-%m-%dT%H:%M:%S"),
