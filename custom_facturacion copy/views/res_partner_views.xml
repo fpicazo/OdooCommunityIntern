@@ -1,0 +1,15 @@
+<!-- invoice_button_draft/views/res_partner_views.xml -->
+<odoo>
+    <record id="view_partner_form_inherited" model="ir.ui.view">
+        <field name="name">res.partner.form.inherited</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form//sheet//group" position="inside">
+            <group>
+                <field name="regimen_fiscal"/>
+            </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>
