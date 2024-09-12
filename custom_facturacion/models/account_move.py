@@ -85,7 +85,7 @@ class AccountMove(models.Model):
                 "Nombre": record.company_id.name or "",
                 "RegimenFiscal": record.company_id.l10n_mx_edi_fiscal_regime or ""
             }
-            
+
             receptor = {
                 "Rfc": record.partner_id.vat or "",
                 "Nombre": record.partner_id.name or "",
@@ -93,65 +93,65 @@ class AccountMove(models.Model):
                 "RegimenFiscalReceptor": record.partner_id.regimen_fiscal or "",
                 "UsoCFDI": record.uso_cfdi or ""
             }
-            
-            
-        conceptos = []
-        total_traslados = 0.0
-        total_retenciones = 0.0
-        traslados = []
-        retenciones = []
 
-        for line in record.invoice_line_ids:
-            impuestos = {
-                "Traslados": [],
-                "Retenciones": []
+            conceptos = []
+            total_traslados = 0.0
+            total_retenciones = 0.0
+            traslados = []
+            retenciones = []
+
+            for line in record.invoice_line_ids:
+                impuestos = {
+                    "Traslados": [],
+                    "Retenciones": []
+                }
+                for tax in line.tax_ids:
+                    if tax.amount > 0:
+                        impuestos["Traslados"].append({
+                            "Base": str(line.price_subtotal),
+                            "Importe": str(line.price_subtotal * tax.amount / 100),
+                            "Impuesto": "002",
+                            "TasaOCuota": str(tax.amount / 100),
+                            "TipoFactor": "Tasa"
+                        })
+                        total_traslados += line.price_subtotal * tax.amount / 100
+                        traslados.append(impuestos["Traslados"][-1])
+                    else:
+                        impuestos["Retenciones"].append({
+                            "Base": str(line.price_subtotal),
+                            "Importe": str(-line.price_subtotal * tax.amount / 100),
+                            "Impuesto": "002",
+                            "TasaOCuota": str(-tax.amount / 100),
+                            "TipoFactor": "Tasa"
+                        })
+                        total_retenciones += -line.price_subtotal * tax.amount / 100
+                        retenciones.append(impuestos["Retenciones"][-1])
+
+                conceptos.append({
+                    "ClaveProdServ": line.product_id.sat_unit_code or "",
+                    "NoIdentificacion": line.product_id.sat_code_product or "None",
+                    "Cantidad": str(line.quantity),
+                    "ClaveUnidad": "E48",
+                    "Unidad": line.product_uom_id.name or "Pieza",
+                    "Descripcion": line.name or "",
+                    "ValorUnitario": str(line.price_unit),
+                    "Importe": str(line.price_subtotal),
+                    "Descuento": "0.00",
+                    "ObjetoImp": "02",
+                    "Impuestos": impuestos
+                })
+
+            # Construct the Impuestos dictionary, adding Retenciones only if it's not empty
+            impuestos_data = {
+                "TotalImpuestosTrasladados": str(total_traslados),
+                "Traslados": traslados
             }
-            for tax in line.tax_ids:
-                if tax.amount > 0:
-                    impuestos["Traslados"].append({
-                        "Base": str(line.price_subtotal),
-                        "Importe": str(line.price_subtotal * tax.amount / 100),
-                        "Impuesto": "002",
-                        "TasaOCuota": str(tax.amount / 100),
-                        "TipoFactor": "Tasa"
-                    })
-                    total_traslados += line.price_subtotal * tax.amount / 100
-                    traslados.append(impuestos["Traslados"][-1])
-                else:
-                    impuestos["Retenciones"].append({
-                        "Base": str(line.price_subtotal),
-                        "Importe": str(-line.price_subtotal * tax.amount / 100),
-                        "Impuesto": "002",
-                        "TasaOCuota": str(-tax.amount / 100),
-                        "TipoFactor": "Tasa"
-                    })
-                    total_retenciones += -line.price_subtotal * tax.amount / 100
-                    retenciones.append(impuestos["Retenciones"][-1])
 
-            conceptos.append({
-                "ClaveProdServ": line.product_id.sat_unit_code or "",
-                "NoIdentificacion": line.product_id.sat_code_product or "None",
-                "Cantidad": str(line.quantity),
-                "ClaveUnidad": "E48",
-                "Unidad": line.product_uom_id.name or "Pieza",
-                "Descripcion": line.name or "",
-                "ValorUnitario": str(line.price_unit),
-                "Importe": str(line.price_subtotal),
-                "Descuento": "0.00",
-                "ObjetoImp": "02",
-                "Impuestos": impuestos
-            })
+            # Only include Retenciones if there are retentions
+            if retenciones:
+                impuestos_data["Retenciones"] = retenciones
+                impuestos_data["TotalImpuestosRetenidos"] = str(total_retenciones)
 
-        # Construct the Impuestos dictionary, adding Retenciones only if it's not empty
-        impuestos_data = {
-            "TotalImpuestosTrasladados": str(total_traslados),
-            "Traslados": traslados
-        }
-
-        # Only include Retenciones if there are retentions
-        if retenciones:
-            impuestos_data["Retenciones"] = retenciones
-            impuestos_data["TotalImpuestosRetenidos"] = str(total_retenciones)
             # Construct the JSON payload
             json_data = {
                 "Version": "4.0",
@@ -216,13 +216,16 @@ class AccountMove(models.Model):
                 raise UserError(_("Error in API call: %s") % str(e))
 
             # Move the invoice to the next stage (e.g., 'posted')
-            #record.state = 'timbrado'
- """
+            record.state = 'timbrado'
+            """
             # Refresh the view to reflect changes
             return {
                 'type': 'ir.actions.client',
                 'tag': 'reload',
             }
+
+
+
 # ResCompany class
 class ResCompany(models.Model):
     _inherit = 'res.company'
