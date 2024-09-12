@@ -101,7 +101,7 @@ class AccountMove(models.Model):
                         retenciones.append(impuestos["Retenciones"][-1])
                 
                 conceptos.append({
-                    "ClaveProdServ": line.product_id.sat_unit_code.code or "",
+                    "ClaveProdServ": line.product_id.sat_unit_code or "",
                     "NoIdentificacion": line.product_id.sat_code_product or "None",
                     "Cantidad": str(line.quantity),
                     "ClaveUnidad": "E48",
