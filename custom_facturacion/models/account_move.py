@@ -74,7 +74,7 @@ class AccountMove(models.Model):
         ('timbrado', 'Timbrado')
     ], ondelete={'timbrado': 'set default'})
 
-    def format_decimal(value, precision=2):
+    def format_decimal(self,value, precision=2):
         """Helper function to format decimal values with a fixed number of decimal places."""
         return f"{value:.{precision}f}"
 
