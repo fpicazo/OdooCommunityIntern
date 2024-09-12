@@ -120,7 +120,7 @@ class AccountMove(models.Model):
                 "Serie": "SW",
                 "Folio": record.name.split()[-1],
                 "Fecha": record.invoice_date.strftime("%Y-%m-%dT%H:%M:%S"),
-                "MetodoPago": record.l10n_mx_edi_payment_policy or "PUE",
+                "MetodoPago": record.modo_pago or "PUE",
                 "Sello": "",
                 "NoCertificado": "",
                 "Certificado": "",
