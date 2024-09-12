@@ -79,16 +79,37 @@ class AccountMove(models.Model):
             if record.state != 'posted':
                 raise UserError(_('You can only perform this action in the posted state.'))
 
+
+            # Validation
+            if not record.partner_id.vat:
+                raise UserError(_('El campo RFC del receptor es obligatorio.'))
+            if not record.partner_id.name:
+                raise UserError(_('El campo Nombre del receptor es obligatorio.'))
+            if not record.partner_id.zip:
+                raise UserError(_('El campo Domicilio Fiscal del receptor es obligatorio.'))
+            if not record.partner_id.regimen_fiscal:
+                raise UserError(_('El campo Régimen Fiscal del receptor es obligatorio.'))
+            if not record.modo_pago:
+                raise UserError(_('El campo Modo de Pago es obligatorio.'))
+            if not record.payment_method:
+                raise UserError(_('El campo Método de Pago es obligatorio.'))
+            
+            # Validation for invoice lines
+            for line in record.invoice_line_ids:
+                if not line.product_id.sat_unit_code:
+                    raise UserError(_('El campo Código SAT de Unidad es obligatorio en las líneas de producto.'))
+                if not line.product_id.sat_code_product:
+                    raise UserError(_('El campo Código SAT del Producto es obligatorio en las líneas de producto.'))
             # Gather required data
             emisor = {
                 "Rfc": record.company_id.vat or "",
-                "Nombre": record.company_id.name or "",
+                 "Nombre": (record.company_id.name or "").upper(),  # Convert to uppercase
                 "RegimenFiscal": record.company_id.l10n_mx_edi_fiscal_regime or ""
             }
 
             receptor = {
                 "Rfc": record.partner_id.vat or "",
-                "Nombre": record.partner_id.name or "",
+                "Nombre": (record.partner_id.name or "").upper(),  # Convert to uppercase
                 "DomicilioFiscalReceptor": record.partner_id.zip or "",
                 "RegimenFiscalReceptor": record.partner_id.regimen_fiscal or "",
                 "UsoCFDI": record.uso_cfdi or ""
@@ -155,7 +176,7 @@ class AccountMove(models.Model):
             # Construct the JSON payload
             json_data = {
                 "Version": "4.0",
-                "FormaPago": record.payment_method or "01",
+                "FormaPago": record.payment_method or "99",
                 "Serie": "SW",
                 "Folio": record.name.split()[-1],
                 "Fecha": record.invoice_date.strftime("%Y-%m-%dT%H:%M:%S"),
