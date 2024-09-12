@@ -20,6 +20,7 @@
                 <xpath expr="//sheet/group" position="inside">
                     <field name="modo_pago"/>
                     <field name="uso_cfdi"/>
+                    <field name="payment_method"/>
                     <field name="folio_fiscal"/>
                 </xpath>
             </data>
