@@ -2,6 +2,7 @@
 
 from odoo import models, api, fields, _
 from odoo.exceptions import UserError
+import requests
 import json
 import base64
 
@@ -169,15 +170,31 @@ class AccountMove(models.Model):
             
             json_str = json.dumps(json_data, ensure_ascii=False)
 
-            # Create a binary attachment
-            attachment = self.env['ir.attachment'].create({
-                'name': f'{record.name}_factura_fiscal.json',
-                'type': 'binary',
-                'datas': base64.b64encode(json_str.encode('utf-8')),
-                'res_model': 'account.move',
-                'res_id': record.id,
-                'mimetype': 'application/json',
-            })
+            # API Call to External Service
+            url = "https://services.test.sw.com.mx/v4/cfdi33/issue/json/v1"
+            headers = {
+                'Authorization': 'bearer token',
+                'customid': 'myCustomId',
+                'Content-Type': 'application/json'
+            }
+
+            try:
+                response = requests.post(url, headers=headers, data=json_str)
+                response.raise_for_status()
+
+                # Store API response as attachment
+                response_text = response.text
+                attachment = self.env['ir.attachment'].create({
+                    'name': f'{record.name}_api_response.txt',
+                    'type': 'binary',
+                    'datas': base64.b64encode(response_text.encode('utf-8')),
+                    'res_model': 'account.move',
+                    'res_id': record.id,
+                    'mimetype': 'text/plain',
+                })
+
+            except requests.exceptions.HTTPError as e:
+                raise UserError(_("Error in API call: %s") % str(e))
 
             # Move the invoice to the next stage (e.g., 'posted')
             record.state = 'timbrado'
