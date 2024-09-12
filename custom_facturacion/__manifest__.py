@@ -14,6 +14,7 @@
         'views/task_view.xml',
         'views/sale_order_view.xml',
         'views/hr_employee_view.xml',
+        'views/res_company_views.xml',
     ],
     'installable': True,
     'application': False,
