@@ -1,14 +1,11 @@
-# models/account_move_res_company.py
-
 from odoo import models, api, fields, _
 from odoo.exceptions import UserError
 import requests
 import json
 import base64
 
-token = 'Bearer T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbXB3YVZxTHdOdHAwVXY2NTdJb1hkREtXTzE3dk9pMmdMdkFDR2xFWFVPUXpTUm9mTG1ySXdZbFNja3FRa0RlYURqbzdzdlI2UUx1WGJiKzViUWY2dnZGbFloUDJ6RjhFTGF4M1BySnJ4cHF0YjUvbmRyWWpjTkVLN3ppd3RxL0dJPQ.T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbFlVcU92YUJTZWlHU3pER1kySnlXRTF4alNUS0ZWcUlVS0NhelhqaXdnWTRncklVSWVvZlFZMWNyUjVxYUFxMWFxcStUL1IzdGpHRTJqdS9Zakw2UGRIanhVK1NteUdKZTJVVW51dGtnYW5QM2JKOG5tRWJQUlBtZFZaQ3NhaXF5R050ODNKTngxOVN2azVGZlMwcnF3MUNaQWNCcksvaUdSVjJwUU9MZjAxdkFGTGdTb2pxK2JEWm4xczlOMytSMStMZXhMeHZReCtNQUZwWG1YWlZFY0xKSFF2MGxUQTlZNEEwcjBGbk5CQ1lKSFpkamdMVTlDSmx2YXN6dUdPTTVtUUUxTjBaMnlCYURYTS9jSjdDbjhIbnhoQW1aRWpoQmV2ZERyRDA2MnY4Y2J0aXdSaDY0SzNiVExRNGtmMGV3OWVSZW9uQmJmaWlGZU5QOFpsYUJDNXNGSXIxMkxTZ2YzZUVVRWRHeWJoL1lnY3ZxblExQ1QwajhRNGZlQVNxNkd2L280cTRST1A4UkVQamFDK3J2SnB0b3RPK00zYkt3aHV3OTFwaWFFeWNHU2ZXZ1owQnlJK2VadkNzOUJPTVliNzRheFFsNkN1SURCMUVxdEVrd2E2dVdMVFEvSmNKWGxQb0dRUFdGUEt3PT0.VtMmvV72pmXTPJPaf4qYIjhNjEzLRlX-XiV2Y3DxVFU'
+token = 'Bearer YOUR_TOKEN'
 
-# AccountMove class
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
@@ -18,28 +15,28 @@ class AccountMove(models.Model):
     ], string='Modo de Pago')
 
     payment_method = fields.Selection([
-    ('01', 'Efectivo'),
-    ('02', 'Cheque nominativo'),
-    ('03', 'Transferencia electrónica de fondos'),
-    ('04', 'Tarjeta de crédito'),
-    ('05', 'Monedero electrónico'),
-    ('06', 'Dinero electrónico'),
-    ('08', 'Vales de despensa'),
-    ('12', 'Dación en pago'),
-    ('13', 'Pago por subrogación'),
-    ('14', 'Pago por consignación'),
-    ('15', 'Condonación'),
-    ('17', 'Compensación'),
-    ('23', 'Novación'),
-    ('24', 'Confusión'),
-    ('25', 'Remisión de deuda'),
-    ('26', 'Prescripción o caducidad'),
-    ('27', 'A satisfacción del acreedor'),
-    ('28', 'Tarjeta de débito'),
-    ('29', 'Tarjeta de servicios'),
-    ('30', 'Aplicación de anticipos'),
-    ('99', 'Por definir')
-], string='Método de Pago')
+        ('01', 'Efectivo'),
+        ('02', 'Cheque nominativo'),
+        ('03', 'Transferencia electrónica de fondos'),
+        ('04', 'Tarjeta de crédito'),
+        ('05', 'Monedero electrónico'),
+        ('06', 'Dinero electrónico'),
+        ('08', 'Vales de despensa'),
+        ('12', 'Dación en pago'),
+        ('13', 'Pago por subrogación'),
+        ('14', 'Pago por consignación'),
+        ('15', 'Condonación'),
+        ('17', 'Compensación'),
+        ('23', 'Novación'),
+        ('24', 'Confusión'),
+        ('25', 'Remisión de deuda'),
+        ('26', 'Prescripción o caducidad'),
+        ('27', 'A satisfacción del acreedor'),
+        ('28', 'Tarjeta de débito'),
+        ('29', 'Tarjeta de servicios'),
+        ('30', 'Aplicación de anticipos'),
+        ('99', 'Por definir')
+    ], string='Método de Pago')
 
     uso_cfdi = fields.Selection([
         ('G01', 'Adquisición de mercancías'),
@@ -74,7 +71,7 @@ class AccountMove(models.Model):
         ('timbrado', 'Timbrado')
     ], ondelete={'timbrado': 'set default'})
 
-    def format_decimal(self,value, precision=2):
+    def format_decimal(self, value, precision=2):
         """Helper function to format decimal values with a fixed number of decimal places."""
         return f"{value:.{precision}f}"
 
