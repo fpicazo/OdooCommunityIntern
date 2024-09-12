@@ -6,6 +6,8 @@ import requests
 import json
 import base64
 
+token = 'T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbXB3YVZxTHdOdHAwVXY2NTdJb1hkREtXTzE3dk9pMmdMdkFDR2xFWFVPUXpTUm9mTG1ySXdZbFNja3FRa0RlYURqbzdzdlI2UUx1WGJiKzViUWY2dnZGbFloUDJ6RjhFTGF4M1BySnJ4cHF0YjUvbmRyWWpjTkVLN3ppd3RxL0dJPQ.T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbFlVcU92YUJTZWlHU3pER1kySnlXRTF4alNUS0ZWcUlVS0NhelhqaXdnWTRncklVSWVvZlFZMWNyUjVxYUFxMWFxcStUL1IzdGpHRTJqdS9Zakw2UGRIanhVK1NteUdKZTJVVW51dGtnYW5QM2JKOG5tRWJQUlBtZFZaQ3NhaXF5R050ODNKTngxOVN2azVGZlMwcnF3MUNaQWNCcksvaUdSVjJwUU9MZjAxdkFGTGdTb2pxK2JEWm4xczlOMytSMStMZXhMeHZReCtNQUZwWG1YWlZFY0xKSFF2MGxUQTlZNEEwcjBGbk5CQ1lKSFpkamdMVTlDSmx2YXN6dUdPTTVtUUUxTjBaMnlCYURYTS9jSjdDbjhIbnhoQW1aRWpoQmV2ZERyRDA2MnY4Y2J0aXdSaDY0SzNiVExRNGtmMGV3OWVSZW9uQmJmaWlGZU5QOFpsYUJDNXNGSXIxMkxTZ2YzZUVVRWRHeWJoL1lnY3ZxblExQ1QwajhRNGZlQVNxNkd2L280cTRST1A4UkVQamFDK3J2SnB0b3RPK00zYkt3aHV3OTFwaWFFeWNHU2ZXZ1owQnlJK2VadkNzOUJPTVliNzRheFFsNkN1SURCMUVxdEVrd2E2dVdMVFEvSmNKWGxQb0dRUFdGUEt3PT0.VtMmvV72pmXTPJPaf4qYIjhNjEzLRlX-XiV2Y3DxVFU'
+
 # AccountMove class
 class AccountMove(models.Model):
     _inherit = 'account.move'
@@ -173,7 +175,7 @@ class AccountMove(models.Model):
             # API Call to External Service
             url = "https://services.test.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
-                'Authorization': 'bearer token',
+                'Authorization': token,
                 'customid': 'myCustomId',
                 'Content-Type': 'application/json'
             }
