@@ -132,8 +132,8 @@ class AccountMove(models.Model):
                 for tax in line.tax_ids:
                     if tax.amount > 0:
                         impuestos["Traslados"].append({
-                            "Base": format_decimal(line.price_subtotal),
-                            "Importe": format_decimal(line.price_subtotal * tax.amount / 100),
+                            "Base": self.format_decimal(line.price_subtotal),
+                            "Importe": self.format_decimal(line.price_subtotal * tax.amount / 100),
                             "Impuesto": "002",
                             "TasaOCuota": str(tax.amount / 100),
                             "TipoFactor": "Tasa"
@@ -142,8 +142,8 @@ class AccountMove(models.Model):
                         traslados.append(impuestos["Traslados"][-1])
                     else:
                         impuestos["Retenciones"].append({
-                            "Base": format_decimal(line.price_subtotal),
-                            "Importe": format_decimal(-line.price_subtotal * tax.amount / 100),
+                            "Base": self.format_decimal(line.price_subtotal),
+                            "Importe": self.format_decimal(-line.price_subtotal * tax.amount / 100),
                             "Impuesto": "002",
                             "TasaOCuota": str(-tax.amount / 100),
                             "TipoFactor": "Tasa"
@@ -161,13 +161,13 @@ class AccountMove(models.Model):
                 conceptos.append({
                     "ClaveProdServ": line.product_id.sat_code_product or "", 
                     "NoIdentificacion": line.product_id.sat_unit_code or "None",
-                    "Cantidad": format_decimal(line.quantity),
+                    "Cantidad": self.format_decimal(line.quantity),
                     "ClaveUnidad": "E48",
                     "Unidad": line.product_uom_id.name or "Pieza",
                     "Descripcion": line.name or "",
-                    "ValorUnitario": format_decimal(line.price_unit),
-                    "Importe": format_decimal(line.price_subtotal),
-                    "Descuento": format_decimal(0.00),
+                    "ValorUnitario": self.format_decimal(line.price_unit),
+                    "Importe": self.format_decimal(line.price_subtotal),
+                    "Descuento": self.format_decimal(0.00),
                     "ObjetoImp": "02",
                     "Impuestos": impuestos_data_concepto
                 })
@@ -195,10 +195,10 @@ class AccountMove(models.Model):
                 "NoCertificado": "",
                 "Certificado": "",
                 "CondicionesDePago": record.invoice_payment_term_id.name or "CondicionesDePago",
-                "SubTotal": str(record.amount_untaxed),
-                "Descuento": "0.00",
+                 "SubTotal": self.format_decimal(record.amount_untaxed),
+                "Descuento": self.format_decimal(0.00),
                 "Moneda": record.currency_id.name or "MXN",
-                "Total": str(record.amount_total),
+                "Total": self.format_decimal(record.amount_total),
                 "TipoDeComprobante": "I",
                 "Exportacion": "01",
                 "LugarExpedicion": record.company_id.zip or "",
