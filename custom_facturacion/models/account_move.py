@@ -6,7 +6,7 @@ import requests
 import json
 import base64
 
-token = 'T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbXB3YVZxTHdOdHAwVXY2NTdJb1hkREtXTzE3dk9pMmdMdkFDR2xFWFVPUXpTUm9mTG1ySXdZbFNja3FRa0RlYURqbzdzdlI2UUx1WGJiKzViUWY2dnZGbFloUDJ6RjhFTGF4M1BySnJ4cHF0YjUvbmRyWWpjTkVLN3ppd3RxL0dJPQ.T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbFlVcU92YUJTZWlHU3pER1kySnlXRTF4alNUS0ZWcUlVS0NhelhqaXdnWTRncklVSWVvZlFZMWNyUjVxYUFxMWFxcStUL1IzdGpHRTJqdS9Zakw2UGRIanhVK1NteUdKZTJVVW51dGtnYW5QM2JKOG5tRWJQUlBtZFZaQ3NhaXF5R050ODNKTngxOVN2azVGZlMwcnF3MUNaQWNCcksvaUdSVjJwUU9MZjAxdkFGTGdTb2pxK2JEWm4xczlOMytSMStMZXhMeHZReCtNQUZwWG1YWlZFY0xKSFF2MGxUQTlZNEEwcjBGbk5CQ1lKSFpkamdMVTlDSmx2YXN6dUdPTTVtUUUxTjBaMnlCYURYTS9jSjdDbjhIbnhoQW1aRWpoQmV2ZERyRDA2MnY4Y2J0aXdSaDY0SzNiVExRNGtmMGV3OWVSZW9uQmJmaWlGZU5QOFpsYUJDNXNGSXIxMkxTZ2YzZUVVRWRHeWJoL1lnY3ZxblExQ1QwajhRNGZlQVNxNkd2L280cTRST1A4UkVQamFDK3J2SnB0b3RPK00zYkt3aHV3OTFwaWFFeWNHU2ZXZ1owQnlJK2VadkNzOUJPTVliNzRheFFsNkN1SURCMUVxdEVrd2E2dVdMVFEvSmNKWGxQb0dRUFdGUEt3PT0.VtMmvV72pmXTPJPaf4qYIjhNjEzLRlX-XiV2Y3DxVFU'
+token = 'Bearer T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbXB3YVZxTHdOdHAwVXY2NTdJb1hkREtXTzE3dk9pMmdMdkFDR2xFWFVPUXpTUm9mTG1ySXdZbFNja3FRa0RlYURqbzdzdlI2UUx1WGJiKzViUWY2dnZGbFloUDJ6RjhFTGF4M1BySnJ4cHF0YjUvbmRyWWpjTkVLN3ppd3RxL0dJPQ.T2lYQ0t4L0RHVkR4dHZ5Nkk1VHNEakZ3Y0J4Nk9GODZuRyt4cE1wVm5tbFlVcU92YUJTZWlHU3pER1kySnlXRTF4alNUS0ZWcUlVS0NhelhqaXdnWTRncklVSWVvZlFZMWNyUjVxYUFxMWFxcStUL1IzdGpHRTJqdS9Zakw2UGRIanhVK1NteUdKZTJVVW51dGtnYW5QM2JKOG5tRWJQUlBtZFZaQ3NhaXF5R050ODNKTngxOVN2azVGZlMwcnF3MUNaQWNCcksvaUdSVjJwUU9MZjAxdkFGTGdTb2pxK2JEWm4xczlOMytSMStMZXhMeHZReCtNQUZwWG1YWlZFY0xKSFF2MGxUQTlZNEEwcjBGbk5CQ1lKSFpkamdMVTlDSmx2YXN6dUdPTTVtUUUxTjBaMnlCYURYTS9jSjdDbjhIbnhoQW1aRWpoQmV2ZERyRDA2MnY4Y2J0aXdSaDY0SzNiVExRNGtmMGV3OWVSZW9uQmJmaWlGZU5QOFpsYUJDNXNGSXIxMkxTZ2YzZUVVRWRHeWJoL1lnY3ZxblExQ1QwajhRNGZlQVNxNkd2L280cTRST1A4UkVQamFDK3J2SnB0b3RPK00zYkt3aHV3OTFwaWFFeWNHU2ZXZ1owQnlJK2VadkNzOUJPTVliNzRheFFsNkN1SURCMUVxdEVrd2E2dVdMVFEvSmNKWGxQb0dRUFdGUEt3PT0.VtMmvV72pmXTPJPaf4qYIjhNjEzLRlX-XiV2Y3DxVFU'
 
 # AccountMove class
 class AccountMove(models.Model):
@@ -140,7 +140,17 @@ class AccountMove(models.Model):
                     "ObjetoImp": "02",
                     "Impuestos": impuestos
                 })
-            
+
+            # Construct the Impuestos dictionary without Retenciones if it's empty
+            impuestos_data = {
+                "TotalImpuestosTrasladados": str(total_traslados),
+                "Traslados": traslados
+            }
+            if retenciones:
+                impuestos_data["Retenciones"] = retenciones
+                impuestos_data["TotalImpuestosRetenidos"] = str(total_retenciones)
+
+            # Construct the JSON payload
             json_data = {
                 "Version": "4.0",
                 "FormaPago": record.payment_method or "01",
@@ -162,14 +172,9 @@ class AccountMove(models.Model):
                 "Emisor": emisor,
                 "Receptor": receptor,
                 "Conceptos": conceptos,
-                "Impuestos": {
-                    "TotalImpuestosTrasladados": str(total_traslados),
-                    "TotalImpuestosRetenidos": str(total_retenciones),
-                    "Retenciones": retenciones,
-                    "Traslados": traslados
-                }
+                "Impuestos": impuestos_data
             }
-            
+
             json_str = json.dumps(json_data, ensure_ascii=False)
 
             # API Call to External Service
@@ -177,7 +182,7 @@ class AccountMove(models.Model):
             headers = {
                 'Authorization': token,
                 'customid': 'myCustomId',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/jsontoxml'
             }
 
             try:
@@ -206,7 +211,6 @@ class AccountMove(models.Model):
                 'type': 'ir.actions.client',
                 'tag': 'reload',
             }
-
 # ResCompany class
 class ResCompany(models.Model):
     _inherit = 'res.company'
