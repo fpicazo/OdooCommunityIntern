@@ -229,7 +229,7 @@ class AccountMove(models.Model):
             })
 
 
-            """
+            
             # API Call to External Service
             url = "https://services.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
@@ -258,14 +258,16 @@ class AccountMove(models.Model):
                      # Fetch XML using the extracted UUID
                     self.fetch_xml_and_attach(uuid, record)
                 else:
-                    raise UserError(_("Error issuing CFDI: %s") % response_data.get("message", "Unknown error"))
+                    # Capture detailed error message and raise it
+                    api_message = response_data.get("message", "Unknown error")
+                    api_message_detail = response_data.get("messageDetail", "")
+                    raise UserError(_("Error issuing CFDI: %s. Details: %s") % (api_message, api_message_detail))
 
             except requests.exceptions.RequestException as e:
                 _logger.error("Error in API request: %s", str(e))
                 raise UserError(_("Error in API request: %s") % str(e))
 
             # Refresh the view or update the state of the invoice
-            """
             #record.state = 'timbrado'
             return {
                 'type': 'ir.actions.client',
