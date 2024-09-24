@@ -264,8 +264,20 @@ class AccountMove(models.Model):
                     raise UserError(_("Error issuing CFDI: %s. Details: %s") % (api_message, api_message_detail))
 
             except requests.exceptions.RequestException as e:
-                _logger.error("Error in API request: %s", str(e))
-                raise UserError(_("Error in API request: %s") % str(e))
+                # Try to extract error details from the response if available
+                if e.response is not None:
+                    try:
+                        # Attempt to parse the JSON error response from the API
+                        response_data = e.response.json()
+                        api_message = response_data.get("message", "Unknown error")
+                        api_message_detail = response_data.get("messageDetail", "")
+                        raise UserError(_("API request failed: %s. Details: %s") % (api_message, api_message_detail))
+                    except (ValueError, KeyError):
+                        # Fallback if the response is not JSON or doesn't contain the expected keys
+                        raise UserError(_("API request failed: %s. Please check the server logs for more details.") % str(e))
+                else:
+                    # No response or error details available
+                    raise UserError(_("API request failed: %s. No additional details available.") % str(e))
 
             # Refresh the view or update the state of the invoice
             #record.state = 'timbrado'
