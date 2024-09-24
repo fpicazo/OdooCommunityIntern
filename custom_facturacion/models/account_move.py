@@ -229,7 +229,7 @@ class AccountMove(models.Model):
             })
 
 
-        
+            """
             # API Call to External Service
             url = "https://services.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
@@ -265,6 +265,7 @@ class AccountMove(models.Model):
                 raise UserError(_("Error in API request: %s") % str(e))
 
             # Refresh the view or update the state of the invoice
+            """
             #record.state = 'timbrado'
             return {
                 'type': 'ir.actions.client',
