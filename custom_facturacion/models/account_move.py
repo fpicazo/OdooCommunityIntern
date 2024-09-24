@@ -271,80 +271,80 @@ class AccountMove(models.Model):
                 'tag': 'reload',
             }
 
-def fetch_xml_and_attach(self, uuid, record):
-        """Fetch XML from the external API using the UUID and attach it to the record."""
+    def fetch_xml_and_attach(self, uuid, record):
+            """Fetch XML from the external API using the UUID and attach it to the record."""
+            try:
+                xml_url = f"https://api.sw.com.mx/datawarehouse/v1/live/{uuid}"
+                headers = {
+                    'Authorization': token,
+                    'Content-Type': 'application/json'
+                }
+                xml_response = requests.get(xml_url, headers=headers)
+                xml_response.raise_for_status()
+
+                # Get the URL to download the XML
+                xml_content_url = xml_response.json()['data']['records'][0]['urlXml']
+                xml_file_content = requests.get(xml_content_url).content
+
+                # Attach the XML as `factura.xml`
+                self.env['ir.attachment'].create({
+                    'name': f'{record.name}_factura.xml',
+                    'type': 'binary',
+                    'datas': base64.b64encode(xml_file_content),
+                    'res_model': 'account.move',
+                    'res_id': record.id,
+                    'mimetype': 'application/xml',
+                })
+
+                _logger.info('XML successfully attached to record %s', record.name)
+
+                # Generate the PDF
+                self.generate_pdf_and_attach(xml_file_content, record)
+
+            except requests.exceptions.RequestException as e:
+                _logger.error("Error in fetching XML: %s", str(e))
+                raise UserError(_("Error in fetching XML: %s") % str(e))
+
+    def generate_pdf_and_attach(self, xml_file_content, record):
+        """Generate PDF using the XML content and attach it to the record."""
         try:
-            xml_url = f"https://api.sw.com.mx/datawarehouse/v1/live/{uuid}"
+            pdf_api_url = "https://api.sw.com.mx/pdf/v1/api/GeneratePdf"
+            pdf_payload = {
+                "xmlContent": xml_file_content.decode('utf-8'),
+                "logo": "",
+                "extras": {
+                    "OBSERVACIONES": "Observaciones ejemplo",
+                    "CalleCliente": "#111",
+                    "NumeroExteriorCliente": "CUSTOM ADDRESS"
+                },
+                "templateId": "cfdi40"
+            }
             headers = {
                 'Authorization': token,
                 'Content-Type': 'application/json'
             }
-            xml_response = requests.get(xml_url, headers=headers)
-            xml_response.raise_for_status()
+            pdf_response = requests.post(pdf_api_url, headers=headers, json=pdf_payload)
+            pdf_response.raise_for_status()
 
-            # Get the URL to download the XML
-            xml_content_url = xml_response.json()['data']['records'][0]['urlXml']
-            xml_file_content = requests.get(xml_content_url).content
+            # Extract the PDF content in base64
+            pdf_content_b64 = pdf_response.json()['data']['contentB64']
+            pdf_file_content = base64.b64decode(pdf_content_b64)
 
-            # Attach the XML as `factura.xml`
+            # Attach the PDF as `factura.pdf`
             self.env['ir.attachment'].create({
-                'name': f'{record.name}_factura.xml',
+                'name': f'{record.name}_factura.pdf',
                 'type': 'binary',
-                'datas': base64.b64encode(xml_file_content),
+                'datas': base64.b64encode(pdf_file_content),
                 'res_model': 'account.move',
                 'res_id': record.id,
-                'mimetype': 'application/xml',
+                'mimetype': 'application/pdf',
             })
 
-            _logger.info('XML successfully attached to record %s', record.name)
-
-            # Generate the PDF
-            self.generate_pdf_and_attach(xml_file_content, record)
+            _logger.info('PDF successfully attached to record %s', record.name)
 
         except requests.exceptions.RequestException as e:
-            _logger.error("Error in fetching XML: %s", str(e))
-            raise UserError(_("Error in fetching XML: %s") % str(e))
-
-def generate_pdf_and_attach(self, xml_file_content, record):
-    """Generate PDF using the XML content and attach it to the record."""
-    try:
-        pdf_api_url = "https://api.sw.com.mx/pdf/v1/api/GeneratePdf"
-        pdf_payload = {
-            "xmlContent": xml_file_content.decode('utf-8'),
-            "logo": "",
-            "extras": {
-                "OBSERVACIONES": "Observaciones ejemplo",
-                "CalleCliente": "#111",
-                "NumeroExteriorCliente": "CUSTOM ADDRESS"
-            },
-            "templateId": "cfdi40"
-        }
-        headers = {
-            'Authorization': token,
-            'Content-Type': 'application/json'
-        }
-        pdf_response = requests.post(pdf_api_url, headers=headers, json=pdf_payload)
-        pdf_response.raise_for_status()
-
-        # Extract the PDF content in base64
-        pdf_content_b64 = pdf_response.json()['data']['contentB64']
-        pdf_file_content = base64.b64decode(pdf_content_b64)
-
-        # Attach the PDF as `factura.pdf`
-        self.env['ir.attachment'].create({
-            'name': f'{record.name}_factura.pdf',
-            'type': 'binary',
-            'datas': base64.b64encode(pdf_file_content),
-            'res_model': 'account.move',
-            'res_id': record.id,
-            'mimetype': 'application/pdf',
-        })
-
-        _logger.info('PDF successfully attached to record %s', record.name)
-
-    except requests.exceptions.RequestException as e:
-        _logger.error("Error in generating PDF: %s", str(e))
-        raise UserError(_("Error in generating PDF: %s") % str(e))        
+            _logger.error("Error in generating PDF: %s", str(e))
+            raise UserError(_("Error in generating PDF: %s") % str(e))        
 
 # ResCompany class
 class ResCompany(models.Model):
