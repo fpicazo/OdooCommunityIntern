@@ -74,6 +74,7 @@ class AccountMove(models.Model):
     state = fields.Selection(selection_add=[
         ('timbrado', 'Timbrado')
     ], ondelete={'timbrado': 'set default'})
+    
 
     def format_decimal(self, value, precision=2):
         """Helper function to format decimal values with a fixed number of decimal places."""
@@ -228,7 +229,7 @@ class AccountMove(models.Model):
             })
 
 
-            """
+        
             # API Call to External Service
             url = "https://services.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
@@ -241,38 +242,109 @@ class AccountMove(models.Model):
 
                 _logger.info("API Response: %s", response.text)
 
+                # Extract the UUID from the response
+                # Parse the response and extract UUID
+                response_data = response.json()
+                if response_data.get("status") == "success":
+                    tfd_data = response_data['data']['tfd']
+                    _logger.info("Extracted TimbreFiscalDigital: %s", tfd_data)
 
-                # Store API response as attachment
-                response_text = response.text
-                attachment = self.env['ir.attachment'].create({
-                    'name': f'{record.name}_api_response.txt',
-                    'type': 'binary',
-                    'datas': base64.b64encode(response_text.encode('utf-8')),
-                    'res_model': 'account.move',
-                    'res_id': record.id,
-                    'mimetype': 'text/plain',
-                })
+                     # Extract the UUID from the tfd data
+                    uuid_start = tfd_data.find('UUID="') + len('UUID="')
+                    uuid_end = tfd_data.find('"', uuid_start)
+                    uuid = tfd_data[uuid_start:uuid_end]
 
-            except requests.exceptions.HTTPError as e:
-                _logger.error("API Response on Error: %s", response.text)
+                    _logger.info("Extracted UUID: %s", uuid)
+                     # Fetch XML using the extracted UUID
+                    self.fetch_xml_and_attach(uuid, record)
+                else:
+                    raise UserError(_("Error issuing CFDI: %s") % response_data.get("message", "Unknown error"))
 
-                # If an error occurs, try to extract 'messageDetail' from the response
-                try:
-                    error_message = response.json().get('messageDetail', str(e))
-                except Exception:
-                    error_message = str(e)
+            except requests.exceptions.RequestException as e:
+                _logger.error("Error in API request: %s", str(e))
+                raise UserError(_("Error in API request: %s") % str(e))
 
-                raise UserError(_("Error in API call: %s") % error_message)
-            # Move the invoice to the next stage (e.g., 'posted')
+            # Refresh the view or update the state of the invoice
             #record.state = 'timbrado'
-            """
-            # Refresh the view to reflect changes
             return {
                 'type': 'ir.actions.client',
                 'tag': 'reload',
             }
 
+def fetch_xml_and_attach(self, uuid, record):
+        """Fetch XML from the external API using the UUID and attach it to the record."""
+        try:
+            xml_url = f"https://api.sw.com.mx/datawarehouse/v1/live/{uuid}"
+            headers = {
+                'Authorization': token,
+                'Content-Type': 'application/json'
+            }
+            xml_response = requests.get(xml_url, headers=headers)
+            xml_response.raise_for_status()
 
+            # Get the URL to download the XML
+            xml_content_url = xml_response.json()['data']['records'][0]['urlXml']
+            xml_file_content = requests.get(xml_content_url).content
+
+            # Attach the XML as `factura.xml`
+            self.env['ir.attachment'].create({
+                'name': f'{record.name}_factura.xml',
+                'type': 'binary',
+                'datas': base64.b64encode(xml_file_content),
+                'res_model': 'account.move',
+                'res_id': record.id,
+                'mimetype': 'application/xml',
+            })
+
+            _logger.info('XML successfully attached to record %s', record.name)
+
+            # Generate the PDF
+            self.generate_pdf_and_attach(xml_file_content, record)
+
+        except requests.exceptions.RequestException as e:
+            _logger.error("Error in fetching XML: %s", str(e))
+            raise UserError(_("Error in fetching XML: %s") % str(e))
+
+def generate_pdf_and_attach(self, xml_file_content, record):
+    """Generate PDF using the XML content and attach it to the record."""
+    try:
+        pdf_api_url = "https://api.sw.com.mx/pdf/v1/api/GeneratePdf"
+        pdf_payload = {
+            "xmlContent": xml_file_content.decode('utf-8'),
+            "logo": "",
+            "extras": {
+                "OBSERVACIONES": "Observaciones ejemplo",
+                "CalleCliente": "#111",
+                "NumeroExteriorCliente": "CUSTOM ADDRESS"
+            },
+            "templateId": "cfdi40"
+        }
+        headers = {
+            'Authorization': token,
+            'Content-Type': 'application/json'
+        }
+        pdf_response = requests.post(pdf_api_url, headers=headers, json=pdf_payload)
+        pdf_response.raise_for_status()
+
+        # Extract the PDF content in base64
+        pdf_content_b64 = pdf_response.json()['data']['contentB64']
+        pdf_file_content = base64.b64decode(pdf_content_b64)
+
+        # Attach the PDF as `factura.pdf`
+        self.env['ir.attachment'].create({
+            'name': f'{record.name}_factura.pdf',
+            'type': 'binary',
+            'datas': base64.b64encode(pdf_file_content),
+            'res_model': 'account.move',
+            'res_id': record.id,
+            'mimetype': 'application/pdf',
+        })
+
+        _logger.info('PDF successfully attached to record %s', record.name)
+
+    except requests.exceptions.RequestException as e:
+        _logger.error("Error in generating PDF: %s", str(e))
+        raise UserError(_("Error in generating PDF: %s") % str(e))        
 
 # ResCompany class
 class ResCompany(models.Model):
