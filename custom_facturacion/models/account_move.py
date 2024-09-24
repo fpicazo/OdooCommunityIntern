@@ -225,7 +225,6 @@ class AccountMove(models.Model):
                 'Authorization': token,
                 'Content-Type': 'application/jsontoxml'
             }
-            """
             try:
                 response = requests.post(url, headers=headers, data=json_str)
                 response.raise_for_status()
@@ -251,7 +250,6 @@ class AccountMove(models.Model):
                 raise UserError(_("Error in API call: %s") % error_message)
             # Move the invoice to the next stage (e.g., 'posted')
             #record.state = 'timbrado'
-            """
             # Refresh the view to reflect changes
             return {
                 'type': 'ir.actions.client',
