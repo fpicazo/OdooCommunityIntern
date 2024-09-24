@@ -214,6 +214,9 @@ class AccountMove(models.Model):
 
             json_str = json.dumps(json_data, ensure_ascii=False)
 
+            _logger.debug('Payload sent to API: %s', json_str)
+
+
             # Save the generated JSON as an attachment in the Odoo record
             attachment = self.env['ir.attachment'].create({
                 'name': f'{record.name}_factura_fiscal.json',
@@ -224,7 +227,6 @@ class AccountMove(models.Model):
                 'mimetype': 'application/json',
             })
 
-            self.env.cr.flush()
 
 
             # API Call to External Service
