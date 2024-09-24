@@ -223,6 +223,10 @@ class AccountMove(models.Model):
                 'res_id': record.id,
                 'mimetype': 'application/json',
             })
+
+            self.env.cr.flush()
+
+
             # API Call to External Service
             url = "https://services.sw.com.mx/v4/cfdi33/issue/json/v1"
             headers = {
