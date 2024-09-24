@@ -2,9 +2,13 @@ from odoo import models, api, fields, _
 from odoo.exceptions import UserError
 import requests
 import json
+import logging
 import base64
 
 token = 'Bearer YOUR_TOKEN'
+
+_logger = logging.getLogger(__name__)
+
 
 class AccountMove(models.Model):
     _inherit = 'account.move'
@@ -229,6 +233,9 @@ class AccountMove(models.Model):
                 response = requests.post(url, headers=headers, data=json_str)
                 response.raise_for_status()
 
+                _logger.info("API Response: %s", response.text)
+
+
                 # Store API response as attachment
                 response_text = response.text
                 attachment = self.env['ir.attachment'].create({
@@ -249,7 +256,7 @@ class AccountMove(models.Model):
 
                 raise UserError(_("Error in API call: %s") % error_message)
             # Move the invoice to the next stage (e.g., 'posted')
-            record.state = 'timbrado'
+            #record.state = 'timbrado'
             # Refresh the view to reflect changes
             return {
                 'type': 'ir.actions.client',
