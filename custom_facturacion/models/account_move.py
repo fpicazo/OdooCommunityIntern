@@ -139,7 +139,7 @@ class AccountMove(models.Model):
                             "Base": self.format_decimal(line.price_subtotal),
                             "Importe": self.format_decimal(line.price_subtotal * tax.amount / 100),
                             "Impuesto": "002",
-                            "TasaOCuota": str(tax.amount / 100),
+                            "TasaOCuota": f"{tax.amount / 100:.6f}",
                             "TipoFactor": "Tasa"
                         })
                         total_traslados += line.price_subtotal * tax.amount / 100
@@ -149,7 +149,7 @@ class AccountMove(models.Model):
                             "Base": self.format_decimal(line.price_subtotal),
                             "Importe": self.format_decimal(-line.price_subtotal * tax.amount / 100),
                             "Impuesto": "002",
-                            "TasaOCuota": str(-tax.amount / 100),
+                            "TasaOCuota": f"{-tax.amount / 100:.6f}",
                             "TipoFactor": "Tasa"
                         })
                         total_retenciones += -line.price_subtotal * tax.amount / 100
