@@ -248,6 +248,8 @@ class AccountMove(models.Model):
                 })
 
             except requests.exceptions.HTTPError as e:
+                _logger.error("API Response on Error: %s", response.text)
+
                 # If an error occurs, try to extract 'messageDetail' from the response
                 try:
                     error_message = response.json().get('messageDetail', str(e))
