@@ -105,7 +105,7 @@ class BillReceiveController(http.Controller):
                         'journal_id': 1,  # Use the same journal
                         'payment_method_id': 1,  # Set to your default payment method
                         'ref': bill.name,  # Reference for the payment
-                        'invoice_ids': [(4, bill.id)],  # Link to the bill
+                        'move_id': bill.id,  # Link to the bill
                     })
                     payment.action_post()  # Post the payment
 
