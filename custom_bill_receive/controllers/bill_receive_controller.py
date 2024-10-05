@@ -97,12 +97,12 @@ class BillReceiveController(http.Controller):
 
                     # Register a payment for the bill
                     payment = request.env['account.payment'].sudo().create({
-                        'payment_type': 'inbound',
+                        'payment_type': 'outbound',
                         'partner_id': partner.id,
                         'amount': bill.amount_total,
                         'currency_id': currency.id,
                         'date': bill.invoice_date,  # Register payment on the bill date
-                        'journal_id': bill.journal_id.id,  # Use the same journal
+                        'journal_id': 1,  # Use the same journal
                         'payment_method_id': 1,  # Set to your default payment method
                         'ref': bill.name,  # Reference for the payment
                         'invoice_ids': [(4, bill.id)],  # Link to the bill
