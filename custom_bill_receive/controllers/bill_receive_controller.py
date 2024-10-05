@@ -51,7 +51,7 @@ class BillReceiveController(http.Controller):
                         'amount_total': bill_data['amount_total'],
                         'folio_fiscal': bill_data['folio_fiscal'],
                         'invoice_date': bill_data['invoice_date'],  # Date already in string format
-                        'date_due': bill_data['invoice_date'],
+                        'invoice_date_due': bill_data['invoice_date'],
                         'partner_id': partner.id,  # Set the vendor
                         'invoice_line_ids': invoice_line_ids,
                         # Add more fields as needed
