@@ -31,10 +31,26 @@ class BillReceiveController(http.Controller):
                         # Find or create product
                         product = request.env['product.product'].sudo().search([('name', '=', line['name'])], limit=1)
                         if not product:
-                            product = request.env['product.product'].sudo().create({
-                                'name': line['name'],
-                                'type': 'service',  # Adjust product type if necessary
-                            })
+                            try:
+                                product = request.env['product.product'].sudo().create({
+                                    'name': line['name'],
+                                    'type': 'service',  # Adjust product type if necessary
+                                })
+                                # Log product creation for debugging
+                                request.env['ir.logging'].sudo().create({
+                                    'name': 'Product Creation',
+                                    'type': 'server',
+                                    'level': 'info',
+                                    'message': f'Created product: {line["name"]}',
+                                })
+                            except Exception as e:
+                                # Handle product creation failure
+                                errors.append({
+                                    'line_item': line,
+                                    'error': f'Failed to create product: {str(e)}'
+                                })
+                                continue  # Skip this line and move to the next
+
                         invoice_line_ids.append((0, 0, {
                             'name': line['name'],
                             'quantity': line['quantity'],
@@ -70,7 +86,6 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to process the request',
                 'details': str(e)
             }
-
     @http.route('/api/receive_invoices', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_invoices(self, **kwargs):
         try:
