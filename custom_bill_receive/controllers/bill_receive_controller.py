@@ -26,6 +26,20 @@ class BillReceiveController(http.Controller):
                             'supplier_rank': 1,  # Ensure it's marked as a vendor
                         })
 
+                    # Find or set currency
+                    currency = None
+                    if 'currency_code' in bill_data:
+                        currency = request.env['res.currency'].sudo().search([('name', '=', bill_data['currency_code'])], limit=1)
+                        if not currency:
+                            errors.append({'bill_data': bill_data, 'error': f"Currency '{bill_data['currency_code']}' not found."})
+                            continue  # Skip this bill if currency is not found
+                    else:
+                        # Default to USD if no currency is provided
+                        currency = request.env['res.currency'].sudo().search([('name', '=', 'USD')], limit=1)
+                        if not currency:
+                            errors.append({'bill_data': bill_data, 'error': "USD currency not found."})
+                            continue  # Skip this bill if USD is not found
+
                     invoice_line_ids = []
                     for line in bill_data['invoice_line_ids']:
                         # Find or create product
@@ -44,7 +58,6 @@ class BillReceiveController(http.Controller):
                                 tax_ids.append(existing_tax.id)
                             else:
                                 try:
-                                    # Create tax if it doesn't exist
                                     new_tax = request.env['account.tax'].sudo().create({
                                         'name': tax['name'],
                                         'amount': tax['amount'],
@@ -58,7 +71,6 @@ class BillReceiveController(http.Controller):
                                     })
                                     continue  # Skip tax creation if there's an issue
 
-                        # Append line with taxes
                         invoice_line_ids.append((0, 0, {
                             'name': line['name'],
                             'quantity': line['quantity'],
@@ -79,6 +91,7 @@ class BillReceiveController(http.Controller):
                         'invoice_date_due': bill_data['invoice_date'],
                         'partner_id': partner.id,  # Set the vendor
                         'invoice_line_ids': invoice_line_ids,
+                        'currency_id': currency.id  # Set currency (either provided or default to USD)
                     })
                     created_bills.append(bill.id)
                 except Exception as e:
@@ -95,7 +108,38 @@ class BillReceiveController(http.Controller):
                 'details': str(e)
             }
         
-        
+        """example request
+        {
+  "bills": [
+    {
+      "partner_id": {
+        "name": "Vendor Name",
+        "vat": "VENDOR_VAT_NUMBER"
+      },
+      "move_type": "in_invoice",  // For vendor bills
+      "journal_id": 1,  // Valid journal ID for bills
+      "name": "BILL_12345",
+      "amount_total": 1000.0,
+      "folio_fiscal": "FISCAL_FOLIO_12345",
+      "invoice_date": "2024-10-02",
+      "invoice_line_ids": [
+        {
+          "name": "Service/Product Name",
+          "quantity": 10,
+          "price_unit": 100.0,
+          "account_id": 2,
+          "tax_ids": [
+            {
+              "name": "VAT 10%",
+              "amount": 10.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+        """
     @http.route('/api/receive_invoices', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_invoices(self, **kwargs):
         try:
