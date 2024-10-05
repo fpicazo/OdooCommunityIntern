@@ -18,7 +18,10 @@ class BillReceiveController(http.Controller):
             for bill_data in bills_data:
                 try:
                     # Find or create vendor
-                    partner = request.env['res.partner'].sudo().search([('name', '=', bill_data['partner_id']['name']), ('vat', '=', bill_data['partner_id']['vat'])], limit=1)
+                    partner = request.env['res.partner'].sudo().search(
+                        [('name', '=', bill_data['partner_id']['name']), ('vat', '=', bill_data['partner_id']['vat'])], 
+                        limit=1
+                    )
                     if not partner:
                         partner = request.env['res.partner'].sudo().create({
                             'name': bill_data['partner_id']['name'],
@@ -27,18 +30,12 @@ class BillReceiveController(http.Controller):
                         })
 
                     # Find or set currency
-                    currency = None
-                    if 'currency_code' in bill_data:
-                        currency = request.env['res.currency'].sudo().search([('name', '=', bill_data['currency_code'])], limit=1)
-                        if not currency:
-                            errors.append({'bill_data': bill_data, 'error': f"Currency '{bill_data['currency_code']}' not found."})
-                            continue  # Skip this bill if currency is not found
-                    else:
-                        # Default to USD if no currency is provided
-                        currency = request.env['res.currency'].sudo().search([('name', '=', 'USD')], limit=1)
-                        if not currency:
-                            errors.append({'bill_data': bill_data, 'error': "USD currency not found."})
-                            continue  # Skip this bill if USD is not found
+                    currency = request.env['res.currency'].sudo().search(
+                        [('name', '=', bill_data.get('currency_code', 'USD'))], limit=1
+                    )
+                    if not currency:
+                        errors.append({'bill_data': bill_data, 'error': f"Currency '{bill_data['currency_code']}' not found."})
+                        continue  # Skip this bill if currency is not found
 
                     invoice_line_ids = []
                     for line in bill_data['invoice_line_ids']:
@@ -80,19 +77,38 @@ class BillReceiveController(http.Controller):
                             'tax_ids': [(6, 0, tax_ids)]  # Assign tax ids
                         }))
 
+                    # Create the bill
                     bill = request.env['account.move'].sudo().create({
                         'move_type': bill_data['move_type'],  # Specify the type of move
                         'journal_id': bill_data['journal_id'],  # Ensure this is a valid journal ID
-                        'state': 'draft',  # Set the state to draft or posted as needed
+                        'state': 'draft',  # Set the state to draft
                         'name': bill_data['name'],
                         'amount_total': bill_data['amount_total'],
                         'folio_fiscal': bill_data['folio_fiscal'],
-                        'invoice_date': bill_data['invoice_date'],  # Date already in string format
+                        'invoice_date': bill_data['invoice_date'],
                         'invoice_date_due': bill_data['invoice_date'],
                         'partner_id': partner.id,  # Set the vendor
                         'invoice_line_ids': invoice_line_ids,
-                        'currency_id': currency.id  # Set currency (either provided or default to USD)
+                        'currency_id': currency.id  # Set currency
                     })
+
+                    # Publish the bill
+                    bill.action_post()  # Post the bill to publish it
+
+                    # Register a payment for the bill
+                    payment = request.env['account.payment'].sudo().create({
+                        'payment_type': 'inbound',
+                        'partner_id': partner.id,
+                        'amount': bill.amount_total,
+                        'currency_id': currency.id,
+                        'payment_date': bill.invoice_date,  # Register payment on the bill date
+                        'journal_id': bill.journal_id.id,  # Use the same journal
+                        'payment_method_id': 1,  # Set to your default payment method
+                        'ref': bill.name,  # Reference for the payment
+                        'invoice_ids': [(4, bill.id)],  # Link to the bill
+                    })
+                    payment.action_post()  # Post the payment
+
                     created_bills.append(bill.id)
                 except Exception as e:
                     errors.append({'bill_data': bill_data, 'error': str(e)})
@@ -107,7 +123,7 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to process the request',
                 'details': str(e)
             }
-        
+            
         """example request
         {
   "bills": [
