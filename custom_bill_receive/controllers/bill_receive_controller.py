@@ -31,32 +31,41 @@ class BillReceiveController(http.Controller):
                         # Find or create product
                         product = request.env['product.product'].sudo().search([('name', '=', line['name'])], limit=1)
                         if not product:
-                            try:
-                                product = request.env['product.product'].sudo().create({
-                                    'name': line['name'],
-                                    'type': 'service',  # Adjust product type if necessary
-                                })
-                                # Log product creation for debugging
-                                request.env['ir.logging'].sudo().create({
-                                    'name': 'Product Creation',
-                                    'type': 'server',
-                                    'level': 'info',
-                                    'message': f'Created product: {line["name"]}',
-                                })
-                            except Exception as e:
-                                # Handle product creation failure
-                                errors.append({
-                                    'line_item': line,
-                                    'error': f'Failed to create product: {str(e)}'
-                                })
-                                continue  # Skip this line and move to the next
+                            product = request.env['product.product'].sudo().create({
+                                'name': line['name'],
+                                'type': 'service',  # Adjust product type if necessary
+                            })
 
+                        # Find applicable taxes
+                        tax_ids = []
+                        for tax in line.get('tax_ids', []):
+                            existing_tax = request.env['account.tax'].sudo().search([('name', '=', tax['name'])], limit=1)
+                            if existing_tax:
+                                tax_ids.append(existing_tax.id)
+                            else:
+                                try:
+                                    # Create tax if it doesn't exist
+                                    new_tax = request.env['account.tax'].sudo().create({
+                                        'name': tax['name'],
+                                        'amount': tax['amount'],
+                                        'type_tax_use': 'purchase',  # Adjust for purchases
+                                    })
+                                    tax_ids.append(new_tax.id)
+                                except Exception as e:
+                                    errors.append({
+                                        'line_item': line,
+                                        'error': f'Failed to create tax: {str(e)}'
+                                    })
+                                    continue  # Skip tax creation if there's an issue
+
+                        # Append line with taxes
                         invoice_line_ids.append((0, 0, {
                             'name': line['name'],
                             'quantity': line['quantity'],
                             'price_unit': line['price_unit'],
                             'account_id': line['account_id'],
                             'product_id': product.id,
+                            'tax_ids': [(6, 0, tax_ids)]  # Assign tax ids
                         }))
 
                     bill = request.env['account.move'].sudo().create({
@@ -70,7 +79,6 @@ class BillReceiveController(http.Controller):
                         'invoice_date_due': bill_data['invoice_date'],
                         'partner_id': partner.id,  # Set the vendor
                         'invoice_line_ids': invoice_line_ids,
-                        # Add more fields as needed
                     })
                     created_bills.append(bill.id)
                 except Exception as e:
@@ -86,6 +94,8 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to process the request',
                 'details': str(e)
             }
+        
+        
     @http.route('/api/receive_invoices', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_invoices(self, **kwargs):
         try:
