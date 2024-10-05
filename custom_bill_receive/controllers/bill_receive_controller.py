@@ -101,7 +101,7 @@ class BillReceiveController(http.Controller):
                         'partner_id': partner.id,
                         'amount': bill.amount_total,
                         'currency_id': currency.id,
-                        'payment_date': bill.invoice_date,  # Register payment on the bill date
+                        'date': bill.invoice_date,  # Register payment on the bill date
                         'journal_id': bill.journal_id.id,  # Use the same journal
                         'payment_method_id': 1,  # Set to your default payment method
                         'ref': bill.name,  # Reference for the payment
