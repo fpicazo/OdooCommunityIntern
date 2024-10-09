@@ -162,6 +162,20 @@ class BillReceiveController(http.Controller):
                             'customer_rank': 1,  # Ensure it's marked as a customer
                         })
 
+                    # Find or set currency
+                    currency = None
+                    if 'currency_code' in invoice_data:
+                        currency = request.env['res.currency'].sudo().search([('name', '=', invoice_data['currency_code'])], limit=1)
+                        if not currency:
+                            errors.append({'invoice_data': invoice_data, 'error': f"Currency '{invoice_data['currency_code']}' not found."})
+                            continue  # Skip this invoice if currency is not found
+                    else:
+                        # Default to USD if no currency is provided
+                        currency = request.env['res.currency'].sudo().search([('name', '=', 'USD')], limit=1)
+                        if not currency:
+                            errors.append({'invoice_data': invoice_data, 'error': "USD currency not found."})
+                            continue  # Skip this invoice if USD is not found
+
                     invoice_line_ids = []
                     for line in invoice_data['invoice_line_ids']:
                         # Find or create product
@@ -171,25 +185,49 @@ class BillReceiveController(http.Controller):
                                 'name': line['name'],
                                 'type': 'service',  # Adjust product type if necessary
                             })
+
+                        # Find applicable taxes
+                        tax_ids = []
+                        for tax in line.get('tax_ids', []):
+                            existing_tax = request.env['account.tax'].sudo().search([('name', '=', tax['name'])], limit=1)
+                            if existing_tax:
+                                tax_ids.append(existing_tax.id)
+                            else:
+                                try:
+                                    new_tax = request.env['account.tax'].sudo().create({
+                                        'name': tax['name'],
+                                        'amount': tax['amount'],
+                                        'type_tax_use': 'sale',  # Adjust for sales
+                                    })
+                                    tax_ids.append(new_tax.id)
+                                except Exception as e:
+                                    errors.append({
+                                        'line_item': line,
+                                        'error': f'Failed to create tax: {str(e)}'
+                                    })
+                                    continue  # Skip tax creation if there's an issue
+
                         invoice_line_ids.append((0, 0, {
                             'name': line['name'],
                             'quantity': line['quantity'],
                             'price_unit': line['price_unit'],
                             'account_id': line['account_id'],
                             'product_id': product.id,
+                            'tax_ids': [(6, 0, tax_ids)]  # Assign tax ids
                         }))
 
                     invoice = request.env['account.move'].sudo().create({
-                        'move_type': invoice_data['move_type'],  # Specify the type of move
+                        'move_type': invoice_data['move_type'],  # Specify the type of move (customer invoice)
                         'journal_id': invoice_data['journal_id'],  # Ensure this is a valid journal ID
                         'state': 'draft',  # Set the state to draft or posted as needed
                         'name': invoice_data['name'],
                         'amount_total': invoice_data['amount_total'],
                         'folio_fiscal': invoice_data['folio_fiscal'],
                         'invoice_date': invoice_data['invoice_date'],  # Date already in string format
+                        'invoice_date_due': invoice_data['invoice_date_due'],
                         'partner_id': partner.id,  # Set the customer
                         'invoice_line_ids': invoice_line_ids,
-                        # Add more fields as needed
+                        'currency_id': currency.id  # Set currency (either provided or default to USD)
                     })
                     created_invoices.append(invoice.id)
                 except Exception as e:
