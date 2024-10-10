@@ -242,7 +242,7 @@ class BillReceiveController(http.Controller):
                             'partner_type': 'customer',
                             'partner_id': partner.id,
                             'amount': payment_data['amount'],
-                            'payment_date': payment_data['payment_date'],
+                            'date': payment_data['payment_date'],
                             'journal_id': payment_data['journal_id'],  # Payment journal (e.g. bank, cash)
                             'currency_id': currency.id,  # Set currency (same as the invoice)
                             'payment_method_id': request.env.ref('account.account_payment_method_manual_in').id,
