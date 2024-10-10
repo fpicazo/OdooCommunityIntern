@@ -246,11 +246,10 @@ class BillReceiveController(http.Controller):
                             'journal_id': payment_data['journal_id'],  # Payment journal (e.g. bank, cash)
                             'currency_id': currency.id,  # Set currency (same as the invoice)
                             'payment_method_id': request.env.ref('account.account_payment_method_manual_in').id,
+                            'invoice_ids': [(4, invoice.id, None)],
                         })
                         payment.action_post()  # Post the payment to validate it
-                        
-                        # Reconcile the payment with the invoice
-                        invoice.js_assign_outstanding_line(payment.line_ids.filtered(lambda l: l.account_id == invoice.line_ids.mapped('account_id')).id)
+                
 
                     
                 except Exception as e:
