@@ -231,7 +231,28 @@ class BillReceiveController(http.Controller):
                         'modo_pago': invoice_data['modo_pago'],
                         'currency_id': currency.id  # Set currency (either provided or default to USD)
                     })
+                    invoice.action_post()
                     created_invoices.append(invoice.id)
+                        # Check if payment data exists in the request
+                    if 'payment_data' in invoice_data:
+                        payment_data = invoice_data['payment_data']
+                        # Register payment after posting the invoice
+                        payment = request.env['account.payment'].sudo().create({
+                            'payment_type': 'inbound',  # Payment received from customer
+                            'partner_type': 'customer',
+                            'partner_id': partner.id,
+                            'amount': payment_data['amount'],
+                            'payment_date': payment_data['payment_date'],
+                            'journal_id': payment_data['journal_id'],  # Payment journal (e.g. bank, cash)
+                            'currency_id': currency.id,  # Set currency (same as the invoice)
+                            'payment_method_id': request.env.ref('account.account_payment_method_manual_in').id,
+                        })
+                        payment.action_post()  # Post the payment to validate it
+                        
+                        # Reconcile the payment with the invoice
+                        invoice.js_assign_outstanding_line(payment.line_ids.filtered(lambda l: l.account_id == invoice.line_ids.mapped('account_id')).id)
+
+                    
                 except Exception as e:
                     errors.append({'invoice_data': invoice_data, 'error': str(e)})
 
