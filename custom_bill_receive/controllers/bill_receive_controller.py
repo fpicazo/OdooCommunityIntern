@@ -153,7 +153,7 @@ class BillReceiveController(http.Controller):
             errors = []
             for invoice_data in invoices_data:
                 try:
-                    # Find or create customer
+                    # Wrap in a try-except block for rollback on failure
                     partner = request.env['res.partner'].sudo().search([('name', '=', invoice_data['partner_id']['name']), ('vat', '=', invoice_data['partner_id']['vat'])], limit=1)
                     if not partner:
                         partner = request.env['res.partner'].sudo().create({
@@ -163,22 +163,12 @@ class BillReceiveController(http.Controller):
                         })
 
                     # Find or set currency
-                    currency = None
-                    if 'currency_code' in invoice_data:
-                        currency = request.env['res.currency'].sudo().search([('name', '=', invoice_data['currency_code'])], limit=1)
-                        if not currency:
-                            errors.append({'invoice_data': invoice_data, 'error': f"Currency '{invoice_data['currency_code']}' not found."})
-                            continue  # Skip this invoice if currency is not found
-                    else:
-                        # Default to USD if no currency is provided
-                        currency = request.env['res.currency'].sudo().search([('name', '=', 'USD')], limit=1)
-                        if not currency:
-                            errors.append({'invoice_data': invoice_data, 'error': "USD currency not found."})
-                            continue  # Skip this invoice if USD is not found
+                    currency = request.env['res.currency'].sudo().search([('name', '=', invoice_data['currency_code'])], limit=1)
+                    if not currency:
+                        raise ValueError(f"Currency '{invoice_data['currency_code']}' not found.")
 
                     invoice_line_ids = []
                     for line in invoice_data['invoice_line_ids']:
-                        # Find or create product
                         product = request.env['product.product'].sudo().search([('name', '=', line['name'])], limit=1)
                         if not product:
                             product = request.env['product.product'].sudo().create({
@@ -186,26 +176,18 @@ class BillReceiveController(http.Controller):
                                 'type': 'service',  # Adjust product type if necessary
                             })
 
-                        # Find applicable taxes
                         tax_ids = []
                         for tax in line.get('tax_ids', []):
                             existing_tax = request.env['account.tax'].sudo().search([('name', '=', tax['name'])], limit=1)
                             if existing_tax:
                                 tax_ids.append(existing_tax.id)
                             else:
-                                try:
-                                    new_tax = request.env['account.tax'].sudo().create({
-                                        'name': tax['name'],
-                                        'amount': tax['amount'],
-                                        'type_tax_use': 'sale',  # Adjust for sales
-                                    })
-                                    tax_ids.append(new_tax.id)
-                                except Exception as e:
-                                    errors.append({
-                                        'line_item': line,
-                                        'error': f'Failed to create tax: {str(e)}'
-                                    })
-                                    continue  # Skip tax creation if there's an issue
+                                new_tax = request.env['account.tax'].sudo().create({
+                                    'name': tax['name'],
+                                    'amount': tax['amount'],
+                                    'type_tax_use': 'sale',  # Adjust for sales
+                                })
+                                tax_ids.append(new_tax.id)
 
                         invoice_line_ids.append((0, 0, {
                             'name': line['name'],
@@ -219,13 +201,13 @@ class BillReceiveController(http.Controller):
                     invoice = request.env['account.move'].sudo().create({
                         'move_type': invoice_data['move_type'],  # Specify the type of move (customer invoice)
                         'journal_id': invoice_data['journal_id'],  # Ensure this is a valid journal ID
-                        'state': 'draft',  # Set the state to draft or posted as needed
+                        'state': 'draft',
                         'name': invoice_data['name'],
                         'amount_total': invoice_data['amount_total'],
                         'folio_fiscal': invoice_data['folio_fiscal'],
-                        'invoice_date': invoice_data['invoice_date'],  # Date already in string format
+                        'invoice_date': invoice_data['invoice_date'],
                         'invoice_date_due': invoice_data['invoice_date_due'],
-                        'partner_id': partner.id,  # Set the customer
+                        'partner_id': partner.id,
                         'invoice_line_ids': invoice_line_ids,
                         'uso_cfdi': invoice_data['uso_cfdi'],
                         'modo_pago': invoice_data['modo_pago'],
@@ -233,27 +215,29 @@ class BillReceiveController(http.Controller):
                     })
                     invoice.action_post()
                     created_invoices.append(invoice.id)
-                        # Check if payment data exists in the request
+
+                    # Check if payment data exists in the request
                     if 'payment_data' in invoice_data:
                         payment_data = invoice_data['payment_data']
-                        # Register payment after posting the invoice
                         payment = request.env['account.payment'].sudo().create({
-                            'payment_type': 'inbound',  # Payment received from customer
+                            'payment_type': 'inbound',
                             'partner_type': 'customer',
                             'partner_id': partner.id,
                             'amount': payment_data['amount'],
                             'date': payment_data['payment_date'],
-                            'journal_id': payment_data['journal_id'],  # Payment journal (e.g. bank, cash)
-                            'currency_id': currency.id,  # Set currency (same as the invoice)
+                            'journal_id': payment_data['journal_id'],
+                            'currency_id': currency.id,
                             'payment_method_id': request.env.ref('account.account_payment_method_manual_in').id,
-                            'invoice_ids': [(4, invoice.id, None)],
+                            'invoice_ids': [(4, invoice.id, None)],  # Link payment to invoice
                         })
-                        payment.action_post()  # Post the payment to validate it
-                
+                        payment.action_post()
 
-                    
                 except Exception as e:
+                    # Rollback transaction in case of failure and log error
+                    request.env.cr.rollback()
+                    _logger.error(f"Error processing invoice: {str(e)}")
                     errors.append({'invoice_data': invoice_data, 'error': str(e)})
+                    continue  # Skip to the next invoice
 
             return {
                 'success': 'Invoices processed',
@@ -261,6 +245,9 @@ class BillReceiveController(http.Controller):
                 'errors': errors
             }
         except Exception as e:
+            # Log the outer exception
+            request.env.cr.rollback()
+            _logger.error(f"Failed to process the request: {str(e)}")
             return {
                 'error': 'Failed to process the request',
                 'details': str(e)
