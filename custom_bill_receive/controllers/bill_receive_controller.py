@@ -1,6 +1,7 @@
 from odoo import http
 from odoo.http import request
 import json
+import logging
 
 class BillReceiveController(http.Controller):
 
@@ -153,7 +154,6 @@ class BillReceiveController(http.Controller):
             errors = []
             for invoice_data in invoices_data:
                 try:
-                    # Wrap in a try-except block for rollback on failure
                     partner = request.env['res.partner'].sudo().search([('name', '=', invoice_data['partner_id']['name']), ('vat', '=', invoice_data['partner_id']['vat'])], limit=1)
                     if not partner:
                         partner = request.env['res.partner'].sudo().create({
@@ -228,16 +228,19 @@ class BillReceiveController(http.Controller):
                             'journal_id': payment_data['journal_id'],
                             'currency_id': currency.id,
                             'payment_method_id': request.env.ref('account.account_payment_method_manual_in').id,
-                            'invoice_ids': [(4, invoice.id, None)],  # Link payment to invoice
                         })
-                        payment.action_post()
+                        payment.action_post()  # Post the payment to validate it
+
+                        # Reconcile payment with invoice
+                        payment_lines = payment.move_id.line_ids.filtered(lambda line: line.account_id.internal_type == 'receivable')
+                        invoice_lines = invoice.line_ids.filtered(lambda line: line.account_id.internal_type == 'receivable')
+                        (payment_lines + invoice_lines).reconcile()
 
                 except Exception as e:
-                    # Rollback transaction in case of failure and log error
                     request.env.cr.rollback()
                     _logger.error(f"Error processing invoice: {str(e)}")
                     errors.append({'invoice_data': invoice_data, 'error': str(e)})
-                    continue  # Skip to the next invoice
+                    continue
 
             return {
                 'success': 'Invoices processed',
@@ -245,7 +248,6 @@ class BillReceiveController(http.Controller):
                 'errors': errors
             }
         except Exception as e:
-            # Log the outer exception
             request.env.cr.rollback()
             _logger.error(f"Failed to process the request: {str(e)}")
             return {
