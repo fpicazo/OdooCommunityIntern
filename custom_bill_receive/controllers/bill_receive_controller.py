@@ -227,6 +227,8 @@ class BillReceiveController(http.Controller):
                         'invoice_date_due': invoice_data['invoice_date_due'],
                         'partner_id': partner.id,  # Set the customer
                         'invoice_line_ids': invoice_line_ids,
+                        'uso_cfdi': invoice_data['uso_cfdi'],
+                        'modo_pago': invoice_data['modo_pago'],
                         'currency_id': currency.id  # Set currency (either provided or default to USD)
                     })
                     created_invoices.append(invoice.id)
