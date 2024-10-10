@@ -3,6 +3,8 @@ from odoo.http import request
 import json
 import logging
 
+_logger = logging.getLogger(__name__)
+
 class BillReceiveController(http.Controller):
 
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
@@ -231,9 +233,9 @@ class BillReceiveController(http.Controller):
                         })
                         payment.action_post()  # Post the payment to validate it
 
-                        # Reconcile payment with invoice
-                        payment_lines = payment.move_id.line_ids.filtered(lambda line: line.account_id.internal_type == 'receivable')
-                        invoice_lines = invoice.line_ids.filtered(lambda line: line.account_id.internal_type == 'receivable')
+                        # Reconcile payment with invoice using internal_group
+                        payment_lines = payment.move_id.line_ids.filtered(lambda line: line.account_id.internal_group == 'receivable')
+                        invoice_lines = invoice.line_ids.filtered(lambda line: line.account_id.internal_group == 'receivable')
                         (payment_lines + invoice_lines).reconcile()
 
                 except Exception as e:
