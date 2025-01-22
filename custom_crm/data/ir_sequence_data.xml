@@ -1,0 +1,33 @@
+<odoo>
+    <!-- Sequence for Bioseguridad -->
+    <record id="seq_sale_order_bio" model="ir.sequence">
+        <field name="name">Sale Order Bioseguridad</field>
+        <field name="code">sale.order.bio</field>
+        <field name="prefix">N/</field>
+        <field name="padding">5</field>
+    </record>
+
+    <!-- Sequence for Mantenimiento -->
+    <record id="seq_sale_order_maint" model="ir.sequence">
+        <field name="name">Sale Order Mantenimiento</field>
+        <field name="code">sale.order.maint</field>
+        <field name="prefix">M/</field>
+        <field name="padding">5</field>
+    </record>
+
+    <!-- Sequence for Taller -->
+    <record id="seq_sale_order_taller" model="ir.sequence">
+        <field name="name">Sale Order Taller</field>
+        <field name="code">sale.order.taller</field>
+        <field name="prefix">T/</field>
+        <field name="padding">5</field>
+    </record>
+
+    <!-- Sequence for Mineral -->
+    <record id="seq_sale_order_mineral" model="ir.sequence">
+        <field name="name">Sale Order Mineral</field>
+        <field name="code">sale.order.mineral</field>
+        <field name="prefix">MNR/</field>
+        <field name="padding">5</field>
+    </record>
+</odoo>
