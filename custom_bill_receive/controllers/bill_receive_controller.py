@@ -132,13 +132,32 @@ class BillReceiveController(http.Controller):
                         })
                         payment.action_post()
 
-                        payment_lines = payment.move_id.line_ids.filtered(
-                            lambda line: line.account_id.internal_group == 'payable'
-                        )
+                        # Reconcile: find payable lines on both bill and payment
+                        # Try account_type first (Odoo 16+), fall back to internal_group
                         bill_lines = bill.line_ids.filtered(
-                            lambda line: line.account_id.internal_group == 'payable'
+                            lambda l: l.account_id.account_type == 'liability_payable'
                         )
-                        (payment_lines + bill_lines).reconcile()
+                        if not bill_lines:
+                            bill_lines = bill.line_ids.filtered(
+                                lambda l: l.account_id.internal_group == 'payable'
+                            )
+
+                        payment_lines = payment.move_id.line_ids.filtered(
+                            lambda l: l.account_id.account_type == 'liability_payable'
+                        )
+                        if not payment_lines:
+                            payment_lines = payment.move_id.line_ids.filtered(
+                                lambda l: l.account_id.internal_group == 'payable'
+                            )
+
+                        lines_to_reconcile = (bill_lines + payment_lines).filtered(
+                            lambda l: not l.reconciled
+                        )
+                        if lines_to_reconcile:
+                            lines_to_reconcile.reconcile()
+                            _logger.info(f"Reconciled bill {bill.id} with payment {payment.id}")
+                        else:
+                            _logger.warning(f"No unreconciled payable lines found for bill {bill.id} / payment {payment.id}")
 
                     created_bills.append(bill.id)
                     _logger.info(f"Created bill {bill.id} for {bill_data['partner_id']['name']}")
@@ -267,13 +286,31 @@ class BillReceiveController(http.Controller):
                         })
                         payment.action_post()
 
-                        payment_lines = payment.move_id.line_ids.filtered(
-                            lambda line: line.account_id.internal_group == 'receivable'
-                        )
+                        # Reconcile: find receivable lines on both invoice and payment
                         invoice_lines = invoice.line_ids.filtered(
-                            lambda line: line.account_id.internal_group == 'receivable'
+                            lambda l: l.account_id.account_type == 'asset_receivable'
                         )
-                        (payment_lines + invoice_lines).reconcile()
+                        if not invoice_lines:
+                            invoice_lines = invoice.line_ids.filtered(
+                                lambda l: l.account_id.internal_group == 'receivable'
+                            )
+
+                        payment_lines = payment.move_id.line_ids.filtered(
+                            lambda l: l.account_id.account_type == 'asset_receivable'
+                        )
+                        if not payment_lines:
+                            payment_lines = payment.move_id.line_ids.filtered(
+                                lambda l: l.account_id.internal_group == 'receivable'
+                            )
+
+                        lines_to_reconcile = (invoice_lines + payment_lines).filtered(
+                            lambda l: not l.reconciled
+                        )
+                        if lines_to_reconcile:
+                            lines_to_reconcile.reconcile()
+                            _logger.info(f"Reconciled invoice {invoice.id} with payment {payment.id}")
+                        else:
+                            _logger.warning(f"No unreconciled receivable lines found for invoice {invoice.id} / payment {payment.id}")
 
                     _logger.info(f"Created invoice {invoice.id} for {invoice_data['partner_id']['name']}")
                 except Exception as e:
