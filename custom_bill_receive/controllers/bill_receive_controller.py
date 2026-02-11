@@ -8,17 +8,26 @@ _logger = logging.getLogger(__name__)
 class BillReceiveController(http.Controller):
 
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
-    def receive_bills(self, **kwargs):
+    def receive_bills(self, bills=None, **kwargs):
         try:
-            data = json.loads(request.httprequest.data.decode('utf-8'))
-            bills_data = data.get('bills', [])
+            # type='json' + JSON-RPC: Odoo extracts params automatically as kwargs
+            # So bills comes directly from params.bills
+            if not bills:
+                # Fallback: try parsing raw body (for non-JSON-RPC direct calls)
+                try:
+                    raw = json.loads(request.httprequest.data.decode('utf-8'))
+                    bills = raw.get('params', raw).get('bills', raw.get('bills', []))
+                except Exception:
+                    bills = []
 
-            if not bills_data:
+            if not bills:
                 return {'error': 'No bills data received'}
+
+            _logger.info(f"Received {len(bills)} bills to process")
 
             created_bills = []
             errors = []
-            for bill_data in bills_data:
+            for bill_data in bills:
                 try:
                     # Find or create vendor
                     partner = request.env['res.partner'].sudo().search([
@@ -49,7 +58,6 @@ class BillReceiveController(http.Controller):
 
                     invoice_line_ids = []
                     for line in bill_data['invoice_line_ids']:
-                        # Find or create product
                         product = request.env['product.product'].sudo().search([
                             ('name', '=', line['name'])
                         ], limit=1)
@@ -59,7 +67,6 @@ class BillReceiveController(http.Controller):
                                 'type': 'service',
                             })
 
-                        # Find or create taxes
                         tax_ids = []
                         for tax in line.get('tax_ids', []):
                             existing_tax = request.env['account.tax'].sudo().search([
@@ -105,10 +112,8 @@ class BillReceiveController(http.Controller):
                         'currency_id': currency.id
                     })
 
-                    # Post the bill so it can be paid
                     bill.action_post()
 
-                    # Always create payment and reconcile
                     if 'payment_data' in bill_data:
                         payment_data = bill_data['payment_data']
                         payment = request.env['account.payment'].sudo().create({
@@ -123,7 +128,6 @@ class BillReceiveController(http.Controller):
                         })
                         payment.action_post()
 
-                        # Reconcile payment with bill
                         payment_lines = payment.move_id.line_ids.filtered(
                             lambda line: line.account_id.internal_group == 'payable'
                         )
@@ -133,9 +137,10 @@ class BillReceiveController(http.Controller):
                         (payment_lines + bill_lines).reconcile()
 
                     created_bills.append(bill.id)
+                    _logger.info(f"Created bill {bill.id} for {bill_data['partner_id']['name']}")
                 except Exception as e:
                     request.env.cr.rollback()
-                    _logger.error(f"Error processing bill: {str(e)}")
+                    _logger.error(f"Error processing bill: {str(e)}", exc_info=True)
                     errors.append({'bill_data': bill_data, 'error': str(e)})
                     continue
 
@@ -146,24 +151,30 @@ class BillReceiveController(http.Controller):
             }
         except Exception as e:
             request.env.cr.rollback()
-            _logger.error(f"Failed to process the request: {str(e)}")
+            _logger.error(f"Failed to process bills request: {str(e)}", exc_info=True)
             return {
                 'error': 'Failed to process the request',
                 'details': str(e)
             }
 
     @http.route('/api/receive_invoices', type='json', auth='public', methods=['POST'], csrf=False)
-    def receive_invoices(self, **kwargs):
+    def receive_invoices(self, invoices=None, **kwargs):
         try:
-            data = json.loads(request.httprequest.data.decode('utf-8'))
-            invoices_data = data.get('invoices', [])
+            if not invoices:
+                try:
+                    raw = json.loads(request.httprequest.data.decode('utf-8'))
+                    invoices = raw.get('params', raw).get('invoices', raw.get('invoices', []))
+                except Exception:
+                    invoices = []
 
-            if not invoices_data:
+            if not invoices:
                 return {'error': 'No invoices data received'}
+
+            _logger.info(f"Received {len(invoices)} invoices to process")
 
             created_invoices = []
             errors = []
-            for invoice_data in invoices_data:
+            for invoice_data in invoices:
                 try:
                     partner = request.env['res.partner'].sudo().search([
                         ('name', '=', invoice_data['partner_id']['name']),
@@ -176,7 +187,6 @@ class BillReceiveController(http.Controller):
                             'customer_rank': 1,
                         })
 
-                    # Find or set currency
                     currency = request.env['res.currency'].sudo().search([
                         ('name', '=', invoice_data['currency_code'])
                     ], limit=1)
@@ -236,7 +246,6 @@ class BillReceiveController(http.Controller):
                     invoice.action_post()
                     created_invoices.append(invoice.id)
 
-                    # Always create payment and reconcile
                     if 'payment_data' in invoice_data:
                         payment_data = invoice_data['payment_data']
                         payment = request.env['account.payment'].sudo().create({
@@ -251,7 +260,6 @@ class BillReceiveController(http.Controller):
                         })
                         payment.action_post()
 
-                        # Reconcile payment with invoice
                         payment_lines = payment.move_id.line_ids.filtered(
                             lambda line: line.account_id.internal_group == 'receivable'
                         )
@@ -260,9 +268,10 @@ class BillReceiveController(http.Controller):
                         )
                         (payment_lines + invoice_lines).reconcile()
 
+                    _logger.info(f"Created invoice {invoice.id} for {invoice_data['partner_id']['name']}")
                 except Exception as e:
                     request.env.cr.rollback()
-                    _logger.error(f"Error processing invoice: {str(e)}")
+                    _logger.error(f"Error processing invoice: {str(e)}", exc_info=True)
                     errors.append({'invoice_data': invoice_data, 'error': str(e)})
                     continue
 
@@ -273,7 +282,7 @@ class BillReceiveController(http.Controller):
             }
         except Exception as e:
             request.env.cr.rollback()
-            _logger.error(f"Failed to process the request: {str(e)}")
+            _logger.error(f"Failed to process invoices request: {str(e)}", exc_info=True)
             return {
                 'error': 'Failed to process the request',
                 'details': str(e)
