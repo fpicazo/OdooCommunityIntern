@@ -114,6 +114,12 @@ class BillReceiveController(http.Controller):
 
                     if 'payment_data' in bill_data:
                         payment_data = bill_data['payment_data']
+                        pay_journal = request.env['account.journal'].sudo().browse(payment_data['journal_id'])
+                        # Find the outbound payment method line on the journal
+                        pay_method_line = pay_journal.outbound_payment_method_line_ids[:1]
+                        if not pay_method_line:
+                            raise ValueError(f"No outbound payment method configured on journal '{pay_journal.name}' (id={pay_journal.id}). Go to Accounting > Configuration > Journals > {pay_journal.name} > Outgoing Payments and add a method.")
+
                         payment = request.env['account.payment'].sudo().create({
                             'payment_type': 'outbound',
                             'partner_type': 'supplier',
@@ -122,7 +128,7 @@ class BillReceiveController(http.Controller):
                             'date': payment_data['payment_date'],
                             'journal_id': payment_data['journal_id'],
                             'currency_id': currency.id,
-                            'payment_method_id': request.env.ref('account.account_payment_method_manual_out').id,
+                            'payment_method_line_id': pay_method_line.id,
                         })
                         payment.action_post()
 
@@ -244,6 +250,11 @@ class BillReceiveController(http.Controller):
 
                     if 'payment_data' in invoice_data:
                         payment_data = invoice_data['payment_data']
+                        pay_journal = request.env['account.journal'].sudo().browse(payment_data['journal_id'])
+                        pay_method_line = pay_journal.inbound_payment_method_line_ids[:1]
+                        if not pay_method_line:
+                            raise ValueError(f"No inbound payment method configured on journal '{pay_journal.name}' (id={pay_journal.id}). Go to Accounting > Configuration > Journals > {pay_journal.name} > Incoming Payments and add a method.")
+
                         payment = request.env['account.payment'].sudo().create({
                             'payment_type': 'inbound',
                             'partner_type': 'customer',
@@ -252,7 +263,7 @@ class BillReceiveController(http.Controller):
                             'date': payment_data['payment_date'],
                             'journal_id': payment_data['journal_id'],
                             'currency_id': currency.id,
-                            'payment_method_id': request.env.ref('account.account_payment_method_manual_in').id,
+                            'payment_method_line_id': pay_method_line.id,
                         })
                         payment.action_post()
 
