@@ -299,9 +299,9 @@ class BillReceiveController(http.Controller):
                         'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
                         'currency_id': currency.id
                     }
-                    cfdi_origin = invoice_data.get('l10n_mx_edi_cfdi_origin') or invoice_data.get('uuid')
+                    cfdi_origin = invoice_data.get('l10n_mx_edi_cfdi_uuid') or invoice_data.get('uuid')
                     if cfdi_origin:
-                        invoice_vals['l10n_mx_edi_cfdi_origin'] = cfdi_origin
+                        invoice_vals['l10n_mx_edi_cfdi_uuid'] = cfdi_origin
                     if invoice_data.get('invoice_name'):
                         invoice_vals['name'] = invoice_data['invoice_name']
 
