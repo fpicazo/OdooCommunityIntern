@@ -242,11 +242,35 @@ class BillReceiveController(http.Controller):
                                 })
                                 tax_ids.append(new_tax.id)
 
+                        resolved_account_id = False
+                        requested_account_id = line.get('account_id')
+                        if requested_account_id:
+                            requested_account = request.env['account.account'].sudo().browse(requested_account_id).exists()
+                            if requested_account and requested_account.account_type not in ('asset_receivable', 'liability_payable'):
+                                resolved_account_id = requested_account.id
+                            else:
+                                _logger.warning(
+                                    "Invalid account_id %s for invoice line '%s'. "
+                                    "Expected an income/other account, not receivable/payable.",
+                                    requested_account_id, line['name']
+                                )
+
+                        if not resolved_account_id:
+                            income_account = product.property_account_income_id or product.categ_id.property_account_income_categ_id
+                            if income_account and income_account.account_type not in ('asset_receivable', 'liability_payable'):
+                                resolved_account_id = income_account.id
+
+                        if not resolved_account_id:
+                            raise ValueError(
+                                f"No valid income account found for invoice line '{line['name']}'. "
+                                "Provide a valid income account_id."
+                            )
+
                         invoice_line_ids.append((0, 0, {
                             'name': line['name'],
                             'quantity': line['quantity'],
                             'price_unit': line['price_unit'],
-                            'account_id': line['account_id'],
+                            'account_id': resolved_account_id,
                             'product_id': product.id,
                             'tax_ids': [(6, 0, tax_ids)]
                         }))
@@ -264,6 +288,7 @@ class BillReceiveController(http.Controller):
                         'invoice_date': invoice_data['invoice_date'],
                         'invoice_date_due': invoice_data.get('invoice_date_due', invoice_data['invoice_date']),
                         'partner_id': partner.id,
+                        "l10n_mx_edi_cfdi_to_public": False,
                         'invoice_line_ids': invoice_line_ids,
                         'l10n_mx_edi_usage': invoice_data.get('uso_cfdi', 'G03'),
                         'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
