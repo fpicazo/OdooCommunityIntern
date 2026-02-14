@@ -1,4 +1,4 @@
-from odoo import http
+from odoo import http, fields
 from odoo.http import request
 import json
 import logging
@@ -98,7 +98,7 @@ class BillReceiveController(http.Controller):
                             'tax_ids': [(6, 0, tax_ids)]
                         }))
 
-                    bill = request.env['account.move'].sudo().create({
+                    bill_vals = {
                         'move_type': bill_data['move_type'],
                         'journal_id': bill_data['journal_id'],
                         'ref': bill_data.get('name', ''),
@@ -108,7 +108,12 @@ class BillReceiveController(http.Controller):
                         'partner_id': partner.id,
                         'invoice_line_ids': invoice_line_ids,
                         'currency_id': currency.id
-                    })
+                    }
+                    cfdi_origin = bill_data.get('l10n_mx_edi_cfdi_origin') or bill_data.get('uuid')
+                    if cfdi_origin:
+                        bill_vals['l10n_mx_edi_cfdi_origin'] = cfdi_origin
+
+                    bill = request.env['account.move'].sudo().create(bill_vals)
 
                     bill.action_post()
 
@@ -294,57 +299,15 @@ class BillReceiveController(http.Controller):
                         'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
                         'currency_id': currency.id
                     }
+                    cfdi_origin = invoice_data.get('l10n_mx_edi_cfdi_origin') or invoice_data.get('uuid')
+                    if cfdi_origin:
+                        invoice_vals['l10n_mx_edi_cfdi_origin'] = cfdi_origin
                     if invoice_data.get('invoice_name'):
                         invoice_vals['name'] = invoice_data['invoice_name']
 
                     invoice = request.env['account.move'].sudo().create(invoice_vals)
                     invoice.action_post()
                     created_invoices.append(invoice.id)
-
-                    if 'payment_data' in invoice_data:
-                        payment_data = invoice_data['payment_data']
-                        pay_journal = request.env['account.journal'].sudo().browse(payment_data['journal_id'])
-                        pay_method_line = pay_journal.inbound_payment_method_line_ids[:1]
-                        if not pay_method_line:
-                            raise ValueError(f"No inbound payment method configured on journal '{pay_journal.name}' (id={pay_journal.id}). Go to Accounting > Configuration > Journals > {pay_journal.name} > Incoming Payments and add a method.")
-
-                        payment = request.env['account.payment'].sudo().create({
-                            'payment_type': 'inbound',
-                            'partner_type': 'customer',
-                            'partner_id': partner.id,
-                            'amount': payment_data['amount'],
-                            'date': payment_data['payment_date'],
-                            'journal_id': payment_data['journal_id'],
-                            'currency_id': currency.id,
-                            'payment_method_line_id': pay_method_line.id,
-                        })
-                        payment.action_post()
-
-                        # Reconcile: find receivable lines on both invoice and payment
-                        invoice_lines = invoice.line_ids.filtered(
-                            lambda l: l.account_id.account_type == 'asset_receivable'
-                        )
-                        if not invoice_lines:
-                            invoice_lines = invoice.line_ids.filtered(
-                                lambda l: l.account_id.internal_group == 'receivable'
-                            )
-
-                        payment_lines = payment.move_id.line_ids.filtered(
-                            lambda l: l.account_id.account_type == 'asset_receivable'
-                        )
-                        if not payment_lines:
-                            payment_lines = payment.move_id.line_ids.filtered(
-                                lambda l: l.account_id.internal_group == 'receivable'
-                            )
-
-                        lines_to_reconcile = (invoice_lines + payment_lines).filtered(
-                            lambda l: not l.reconciled
-                        )
-                        if lines_to_reconcile:
-                            lines_to_reconcile.reconcile()
-                            _logger.info(f"Reconciled invoice {invoice.id} with payment {payment.id}")
-                        else:
-                            _logger.warning(f"No unreconciled receivable lines found for invoice {invoice.id} / payment {payment.id}")
 
                     _logger.info(f"Created invoice {invoice.id} for {invoice_data['partner_id']['name']}")
                 except Exception as e:
@@ -363,5 +326,122 @@ class BillReceiveController(http.Controller):
             _logger.error(f"Failed to process invoices request: {str(e)}", exc_info=True)
             return {
                 'error': 'Failed to process the request',
+                'details': str(e)
+            }
+
+    @http.route('/api/register_invoice_payment', type='json', auth='public', methods=['POST'], csrf=False)
+    def register_invoice_payment(self, uuid=None, payment_data=None, **kwargs):
+        try:
+            payload = {}
+            if not uuid or not payment_data:
+                try:
+                    raw = json.loads(request.httprequest.data.decode('utf-8'))
+                    payload = raw.get('params', raw)
+                except Exception:
+                    payload = {}
+
+            uuid = uuid or payload.get('uuid') or payload.get('invoice_uuid')
+            payment_data = payment_data or payload.get('payment_data', {})
+
+            if not uuid:
+                return {'error': 'Missing uuid (or invoice_uuid)'}
+            if not payment_data:
+                return {'error': 'Missing payment_data'}
+            if not payment_data.get('journal_id'):
+                return {'error': 'Missing payment_data.journal_id'}
+
+            account_move = request.env['account.move'].sudo()
+            search_domain = [
+                ('move_type', 'in', ['out_invoice', 'out_refund']),
+                ('state', '=', 'posted'),
+            ]
+
+            uuid_filters = []
+            if 'folio_fiscal' in account_move._fields:
+                uuid_filters.append(('folio_fiscal', '=', uuid))
+            if 'l10n_mx_edi_cfdi_uuid' in account_move._fields:
+                uuid_filters.append(('l10n_mx_edi_cfdi_uuid', '=', uuid))
+
+            if not uuid_filters:
+                return {'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).'}
+
+            if len(uuid_filters) == 1:
+                search_domain.append(uuid_filters[0])
+            else:
+                search_domain += ['|', uuid_filters[0], uuid_filters[1]]
+
+            invoice = account_move.search(search_domain, limit=1)
+            if not invoice:
+                return {'error': f"Invoice not found for UUID '{uuid}'"}
+
+            pay_journal = request.env['account.journal'].sudo().browse(payment_data['journal_id']).exists()
+            if not pay_journal:
+                return {'error': f"Journal not found (id={payment_data['journal_id']})"}
+
+            pay_method_line = pay_journal.inbound_payment_method_line_ids[:1]
+            if not pay_method_line:
+                return {'error': f"No inbound payment method configured on journal '{pay_journal.name}' (id={pay_journal.id})."}
+
+            currency = invoice.currency_id
+            currency_code = payment_data.get('currency_code')
+            if currency_code:
+                found_currency = request.env['res.currency'].sudo().search([('name', '=', currency_code)], limit=1)
+                if not found_currency:
+                    return {'error': f"Currency '{currency_code}' not found."}
+                currency = found_currency
+
+            amount = payment_data.get('amount', invoice.amount_residual)
+            payment_date = payment_data.get('payment_date', fields.Date.context_today(request.env.user))
+
+            payment = request.env['account.payment'].sudo().create({
+                'payment_type': 'inbound',
+                'partner_type': 'customer',
+                'partner_id': invoice.partner_id.id,
+                'amount': amount,
+                'date': payment_date,
+                'journal_id': pay_journal.id,
+                'currency_id': currency.id,
+                'payment_method_line_id': pay_method_line.id,
+                'ref': payment_data.get('ref') or f"Payment for UUID {uuid}",
+            })
+            payment.action_post()
+
+            invoice_lines = invoice.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == 'asset_receivable'
+            )
+            if not invoice_lines:
+                invoice_lines = invoice.line_ids.filtered(
+                    lambda l: not l.reconciled and l.account_id.internal_group == 'receivable'
+                )
+
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == 'asset_receivable'
+            )
+            if not payment_lines:
+                payment_lines = payment.move_id.line_ids.filtered(
+                    lambda l: not l.reconciled and l.account_id.internal_group == 'receivable'
+                )
+
+            lines_to_reconcile = invoice_lines + payment_lines
+            if lines_to_reconcile:
+                lines_to_reconcile.reconcile()
+            else:
+                _logger.warning(
+                    "No unreconciled receivable lines found for invoice %s / payment %s",
+                    invoice.id, payment.id
+                )
+
+            _logger.info("Registered payment %s and reconciled invoice %s using UUID %s", payment.id, invoice.id, uuid)
+            return {
+                'success': 'Payment registered and applied',
+                'invoice_id': invoice.id,
+                'payment_id': payment.id,
+                'uuid': uuid,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error(f"Failed to register invoice payment: {str(e)}", exc_info=True)
+            return {
+                'error': 'Failed to register payment',
                 'details': str(e)
             }
