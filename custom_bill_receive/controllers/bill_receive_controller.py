@@ -260,8 +260,8 @@ class BillReceiveController(http.Controller):
                         'invoice_date_due': invoice_data.get('invoice_date_due', invoice_data['invoice_date']),
                         'partner_id': partner.id,
                         'invoice_line_ids': invoice_line_ids,
-                        'uso_cfdi': invoice_data.get('uso_cfdi', 'G03'),
-                        'modo_pago': invoice_data.get('modo_pago', '99'),
+                        'l10n_mx_edi_usage': invoice_data.get('uso_cfdi', 'G03'),
+                        'l10n_mx_edi_payment_method_id': invoice_data.get('modo_pago', '99'),
                         'currency_id': currency.id
                     })
                     invoice.action_post()
