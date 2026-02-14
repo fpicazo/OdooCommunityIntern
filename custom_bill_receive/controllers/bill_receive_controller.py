@@ -251,6 +251,11 @@ class BillReceiveController(http.Controller):
                             'tax_ids': [(6, 0, tax_ids)]
                         }))
 
+                    modo_pago_code = invoice_data.get('modo_pago', '99')
+                    payment_method = request.env['l10n_mx_edi.payment.method'].sudo().search([
+                        ('code', '=', modo_pago_code)
+                    ], limit=1)
+
                     invoice = request.env['account.move'].sudo().create({
                         'move_type': invoice_data['move_type'],
                         'journal_id': invoice_data['journal_id'],
@@ -261,7 +266,7 @@ class BillReceiveController(http.Controller):
                         'partner_id': partner.id,
                         'invoice_line_ids': invoice_line_ids,
                         'l10n_mx_edi_usage': invoice_data.get('uso_cfdi', 'G03'),
-                        'l10n_mx_edi_payment_method_id': invoice_data.get('modo_pago', '99'),
+                        'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
                         'currency_id': currency.id
                     })
                     invoice.action_post()
