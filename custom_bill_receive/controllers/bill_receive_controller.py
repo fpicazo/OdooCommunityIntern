@@ -256,7 +256,7 @@ class BillReceiveController(http.Controller):
                         ('code', '=', modo_pago_code)
                     ], limit=1)
 
-                    invoice = request.env['account.move'].sudo().create({
+                    invoice_vals = {
                         'move_type': invoice_data['move_type'],
                         'journal_id': invoice_data['journal_id'],
                         'ref': invoice_data.get('name', ''),
@@ -268,7 +268,11 @@ class BillReceiveController(http.Controller):
                         'l10n_mx_edi_usage': invoice_data.get('uso_cfdi', 'G03'),
                         'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
                         'currency_id': currency.id
-                    })
+                    }
+                    if invoice_data.get('invoice_name'):
+                        invoice_vals['name'] = invoice_data['invoice_name']
+
+                    invoice = request.env['account.move'].sudo().create(invoice_vals)
                     invoice.action_post()
                     created_invoices.append(invoice.id)
 
