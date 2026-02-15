@@ -102,16 +102,14 @@ class BillReceiveController(http.Controller):
                         'move_type': bill_data['move_type'],
                         'journal_id': bill_data['journal_id'],
                         'ref': bill_data.get('name', ''),
-                        'folio_fiscal': bill_data.get('folio_fiscal', ''),
                         'invoice_date': bill_data['invoice_date'],
                         'invoice_date_due': bill_data.get('invoice_date_due', bill_data['invoice_date']),
                         'partner_id': partner.id,
                         'invoice_line_ids': invoice_line_ids,
+                        'l10n_mx_edi_cfdi_uuid': bill_data.get('l10n_mx_edi_cfdi_uuid', ''),
                         'currency_id': currency.id
                     }
-                    cfdi_origin = bill_data.get('l10n_mx_edi_cfdi_origin') or bill_data.get('uuid')
-                    if cfdi_origin:
-                        bill_vals['l10n_mx_edi_cfdi_origin'] = cfdi_origin
+                    
 
                     bill = request.env['account.move'].sudo().create(bill_vals)
 
