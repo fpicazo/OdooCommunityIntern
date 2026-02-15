@@ -10,10 +10,7 @@ class BillReceiveController(http.Controller):
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_bills(self, bills=None, **kwargs):
         try:
-            # type='json' + JSON-RPC: Odoo extracts params automatically as kwargs
-            # So bills comes directly from params.bills
             if not bills:
-                # Fallback: try parsing raw body (for non-JSON-RPC direct calls)
                 try:
                     raw = json.loads(request.httprequest.data.decode('utf-8'))
                     bills = raw.get('params', raw).get('bills', raw.get('bills', []))
@@ -29,7 +26,6 @@ class BillReceiveController(http.Controller):
             errors = []
             for bill_data in bills:
                 try:
-                    # Find or create vendor
                     partner = request.env['res.partner'].sudo().search([
                         ('name', '=', bill_data['partner_id']['name']),
                         ('vat', '=', bill_data['partner_id']['vat'])
@@ -41,7 +37,6 @@ class BillReceiveController(http.Controller):
                             'supplier_rank': 1,
                         })
 
-                    # Find or set currency
                     currency = None
                     if 'currency_code' in bill_data:
                         currency = request.env['res.currency'].sudo().search([
@@ -109,58 +104,22 @@ class BillReceiveController(http.Controller):
                         'l10n_mx_edi_cfdi_uuid': bill_data.get('l10n_mx_edi_cfdi_uuid', ''),
                         'currency_id': currency.id
                     }
-                    
 
                     bill = request.env['account.move'].sudo().create(bill_vals)
-
                     bill.action_post()
 
                     if 'payment_data' in bill_data:
                         payment_data = bill_data['payment_data']
-                        pay_journal = request.env['account.journal'].sudo().browse(payment_data['journal_id'])
-                        # Find the outbound payment method line on the journal
-                        pay_method_line = pay_journal.outbound_payment_method_line_ids[:1]
-                        if not pay_method_line:
-                            raise ValueError(f"No outbound payment method configured on journal '{pay_journal.name}' (id={pay_journal.id}). Go to Accounting > Configuration > Journals > {pay_journal.name} > Outgoing Payments and add a method.")
-
-                        payment = request.env['account.payment'].sudo().create({
-                            'payment_type': 'outbound',
-                            'partner_type': 'supplier',
-                            'partner_id': partner.id,
-                            'amount': payment_data['amount'],
-                            'date': payment_data['payment_date'],
+                        payment_register = request.env['account.payment.register'].sudo().with_context(
+                            active_model='account.move',
+                            active_ids=[bill.id],
+                        ).create({
+                            'payment_date': payment_data['payment_date'],
                             'journal_id': payment_data['journal_id'],
-                            'currency_id': currency.id,
-                            'payment_method_line_id': pay_method_line.id,
+                            'amount': payment_data['amount'],
                         })
-                        payment.action_post()
-
-                        # Reconcile: find payable lines on both bill and payment
-                        # Try account_type first (Odoo 16+), fall back to internal_group
-                        bill_lines = bill.line_ids.filtered(
-                            lambda l: l.account_id.account_type == 'liability_payable'
-                        )
-                        if not bill_lines:
-                            bill_lines = bill.line_ids.filtered(
-                                lambda l: l.account_id.internal_group == 'payable'
-                            )
-
-                        payment_lines = payment.move_id.line_ids.filtered(
-                            lambda l: l.account_id.account_type == 'liability_payable'
-                        )
-                        if not payment_lines:
-                            payment_lines = payment.move_id.line_ids.filtered(
-                                lambda l: l.account_id.internal_group == 'payable'
-                            )
-
-                        lines_to_reconcile = (bill_lines + payment_lines).filtered(
-                            lambda l: not l.reconciled
-                        )
-                        if lines_to_reconcile:
-                            lines_to_reconcile.reconcile()
-                            _logger.info(f"Reconciled bill {bill.id} with payment {payment.id}")
-                        else:
-                            _logger.warning(f"No unreconciled payable lines found for bill {bill.id} / payment {payment.id}")
+                        payment = payment_register._create_payments()
+                        _logger.info(f"Registered payment {payment.id} for bill {bill.id}")
 
                     created_bills.append(bill.id)
                     _logger.info(f"Created bill {bill.id} for {bill_data['partner_id']['name']}")
@@ -182,6 +141,7 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to process the request',
                 'details': str(e)
             }
+
 
     @http.route('/api/receive_invoices', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_invoices(self, invoices=None, **kwargs):
