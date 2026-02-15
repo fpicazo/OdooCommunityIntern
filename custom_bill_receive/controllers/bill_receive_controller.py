@@ -289,7 +289,7 @@ class BillReceiveController(http.Controller):
                         'move_type': invoice_data['move_type'],
                         'journal_id': invoice_data['journal_id'],
                         'ref': invoice_data.get('name', ''),
-                        'folio_fiscal': invoice_data.get('folio_fiscal', ''),
+                        'l10n_mx_edi_cfdi_uuid': invoice_data.get('l10n_mx_edi_cfdi_uuid', ''),
                         'invoice_date': invoice_data['invoice_date'],
                         'invoice_date_due': invoice_data.get('invoice_date_due', invoice_data['invoice_date']),
                         'partner_id': partner.id,
@@ -299,18 +299,17 @@ class BillReceiveController(http.Controller):
                         'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
                         'currency_id': currency.id
                     }
-                    cfdi_uuid = invoice_data.get('folio_fiscal') or invoice_data.get('uuid') or ''
-                    if cfdi_uuid:
-                        if 'l10n_mx_edi_cfdi_uuid' in request.env['account.move']._fields:
-                            invoice_vals['l10n_mx_edi_cfdi_uuid'] = cfdi_uuid
-                        if 'folio_fiscal' in request.env['account.move']._fields:
-                            invoice_vals['folio_fiscal'] = cfdi_uuid
+                    
                     if invoice_data.get('invoice_name'):
                         invoice_vals['name'] = invoice_data['invoice_name']
 
                     invoice = request.env['account.move'].sudo().create(invoice_vals)
                     invoice.action_post()
                     created_invoices.append(invoice.id)
+
+                    cfdi_uuid = invoice_data.get('l10n_mx_edi_cfdi_uuid', '')
+                    if cfdi_uuid:
+                        invoice.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
 
                     _logger.info(f"Created invoice {invoice.id} for {invoice_data['partner_id']['name']}")
                 except Exception as e:
