@@ -122,6 +122,9 @@ class BillReceiveController(http.Controller):
                         _logger.info(f"Registered payment {payment.id} for bill {bill.id}")
 
                     created_bills.append(bill.id)
+                    cfdi_uuid = bill_data.get('l10n_mx_edi_cfdi_uuid', '')
+                    if cfdi_uuid:
+                        bill.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
                     _logger.info(f"Created bill {bill.id} for {bill_data['partner_id']['name']}")
                 except Exception as e:
                     request.env.cr.rollback()
