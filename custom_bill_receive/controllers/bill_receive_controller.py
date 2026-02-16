@@ -353,6 +353,14 @@ class BillReceiveController(http.Controller):
                     return {'error': f"Currency '{currency_code}' not found."}
                 currency = found_currency
 
+            inv_receivable_line = invoice.line_ids.filtered(
+                lambda l: l.account_id.account_type == 'asset_receivable'
+            )[:1]
+            if not inv_receivable_line:
+                return {'error': f"Invoice {invoice.id} has no receivable line to pay."}
+
+            receivable_account = inv_receivable_line.account_id
+
             amount = payment_data.get('amount', invoice.amount_residual)
             payment_date = payment_data.get('payment_date', fields.Date.context_today(request.env.user))
 
@@ -364,7 +372,8 @@ class BillReceiveController(http.Controller):
                 'date': payment_date,
                 'journal_id': pay_journal.id,
                 'currency_id': currency.id,
-                'payment_method_line_id': pay_method_line.id
+                'payment_method_line_id': pay_method_line.id,
+                'destination_account_id': receivable_account.id,
             })
             payment.action_post()
 
