@@ -364,8 +364,7 @@ class BillReceiveController(http.Controller):
                 'date': payment_date,
                 'journal_id': pay_journal.id,
                 'currency_id': currency.id,
-                'payment_method_line_id': pay_method_line.id,
-                'ref': payment_data.get('ref') or f"Payment for UUID {uuid}",
+                'payment_method_line_id': pay_method_line.id
             })
             payment.action_post()
 
