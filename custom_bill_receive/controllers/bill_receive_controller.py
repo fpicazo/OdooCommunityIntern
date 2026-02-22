@@ -63,10 +63,20 @@ class BillReceiveController(http.Controller):
         partials = (move_lines.matched_debit_ids | move_lines.matched_credit_ids)
         counterpart_lines = (partials.debit_move_id | partials.credit_move_id) - move_lines
 
-        payment_moves = counterpart_lines.mapped('move_id').filtered(
-            lambda m: m.payment_id
-        )
-        return payment_moves.mapped('payment_id')
+        payment_moves = counterpart_lines.mapped('move_id')
+        payments = request.env['account.payment'].sudo().browse()
+
+        # Some Odoo versions expose payment_id directly on account.move.
+        if 'payment_id' in payment_moves._fields:
+            payments |= payment_moves.mapped('payment_id')
+
+        # Fallback compatible path: account.payment has move_id pointing to the payment move.
+        if payment_moves:
+            payments |= request.env['account.payment'].sudo().search([
+                ('move_id', 'in', payment_moves.ids)
+            ])
+
+        return payments
 
     def _get_payment_related_documents(self, payment):
         payment_lines = payment.move_id.line_ids
@@ -347,7 +357,7 @@ class BillReceiveController(http.Controller):
                     _logger.error(f"Error processing invoice: {str(e)}", exc_info=True)
                     errors.append({'invoice_data': invoice_data, 'error': str(e)})
                     continue
-
+ 
             return {
                 'success': 'Invoices processed',
                 'created_invoices': created_invoices,
