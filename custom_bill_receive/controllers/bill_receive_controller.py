@@ -772,63 +772,135 @@ class BillReceiveController(http.Controller):
             }
 
     @http.route('/api/delete_all_bills_and_payments', type='json', auth='public', methods=['POST'], csrf=False)
-    def delete_all_bills_and_payments(self, **kwargs):
+    def delete_all_bills_and_payments(self, limit=None, limit_payments=None, limit_bills=None, **kwargs):
         try:
+            payload = self._extract_json_payload()
+
+            def _parse_limit(value, fallback=None):
+                value = fallback if value is None else value
+                if value in (None, '', False):
+                    return None
+                try:
+                    parsed = int(value)
+                except Exception:
+                    return None
+                return parsed if parsed > 0 else None
+
+            # `limit` applies to both if specific limits are not provided.
+            common_limit = _parse_limit(limit, payload.get('limit'))
+            payments_limit = _parse_limit(limit_payments, payload.get('limit_payments')) or common_limit
+            bills_limit = _parse_limit(limit_bills, payload.get('limit_bills')) or common_limit
+
             payment_model = request.env['account.payment'].sudo()
             move_model = request.env['account.move'].sudo()
 
-            payments = payment_model.search([])
-            bills = move_model.search([('move_type', 'in', ['in_invoice', 'in_refund'])])
+            # Freeze IDs first; avoids extra lazy reads while records are being deleted.
+            payment_ids = payment_model.search([], limit=payments_limit).ids
+            bill_ids = move_model.search([('move_type', 'in', ['in_invoice', 'in_refund'])], limit=bills_limit).ids
 
-            total_payments = len(payments)
-            total_bills = len(bills)
+            total_payments = len(payment_ids)
+            total_bills = len(bill_ids)
             deleted_payments = 0
             deleted_bills = 0
             errors = []
+            fatal_db_error = None
+
+            def _is_db_cursor_closed_error(err):
+                msg = str(err or '').lower()
+                return 'cursor already closed' in msg or 'connection already closed' in msg
 
             # Delete payments first to avoid reconciliation/foreign-key blockers on bills.
-            for payment in payments:
+            for payment_id in payment_ids:
                 try:
-                    with request.env.cr.savepoint():
-                        payment_force = payment.sudo().with_context(force_delete=True, check_move_validity=False)
-                        if payment_force.move_id and payment_force.move_id.line_ids:
-                            payment_force.move_id.line_ids.remove_move_reconcile()
-                        if payment_force.state == 'posted':
-                            try:
-                                self._set_record_to_draft(payment_force)
-                            except Exception:
-                                # Some versions block draft reset; force-delete context handles posted records.
-                                pass
-                        payment_force.unlink()
-                        deleted_payments += 1
+                    payment_force = payment_model.browse(payment_id).exists().with_context(
+                        force_delete=True,
+                        check_move_validity=False
+                    )
+                    if not payment_force:
+                        continue
+
+                    if payment_force.move_id and payment_force.move_id.line_ids:
+                        payment_force.move_id.line_ids.remove_move_reconcile()
+                    if payment_force.state == 'posted':
+                        try:
+                            self._set_record_to_draft(payment_force)
+                        except Exception:
+                            # Some versions block draft reset; force-delete context handles posted records.
+                            pass
+                    payment_force.unlink()
+                    deleted_payments += 1
                 except Exception as payment_error:
                     errors.append({
                         'model': 'account.payment',
-                        'id': payment.id,
+                        'id': payment_id,
                         'error': str(payment_error),
                     })
+                    if _is_db_cursor_closed_error(payment_error):
+                        fatal_db_error = str(payment_error)
+                        break
 
-            for bill in bills:
+            if fatal_db_error:
+                return {
+                    'error': 'Bulk deletion interrupted by database cursor/connection closure',
+                    'details': fatal_db_error,
+                    'summary': {
+                        'requested_limits': {
+                            'limit': common_limit,
+                            'limit_payments': payments_limit,
+                            'limit_bills': bills_limit,
+                        },
+                        'payments': {'found': total_payments, 'deleted': deleted_payments},
+                        'bills': {'found': total_bills, 'deleted': deleted_bills},
+                        'errors_count': len(errors),
+                    },
+                    'errors': errors,
+                }
+
+            for bill_id in bill_ids:
                 try:
-                    with request.env.cr.savepoint():
-                        bill_force = bill.sudo().with_context(force_delete=True, check_move_validity=False)
-                        if bill_force.line_ids:
-                            bill_force.line_ids.remove_move_reconcile()
-                        if bill_force.state == 'posted':
-                            try:
-                                self._set_record_to_draft(bill_force)
-                            except Exception:
-                                # Some journals/lock dates prevent draft reset.
-                                pass
-                        bill_force.unlink()
-                        deleted_bills += 1
+                    bill_force = move_model.browse(bill_id).exists().with_context(
+                        force_delete=True,
+                        check_move_validity=False
+                    )
+                    if not bill_force:
+                        continue
+
+                    if bill_force.line_ids:
+                        bill_force.line_ids.remove_move_reconcile()
+                    if bill_force.state == 'posted':
+                        try:
+                            self._set_record_to_draft(bill_force)
+                        except Exception:
+                            # Some journals/lock dates prevent draft reset.
+                            pass
+                    bill_force.unlink()
+                    deleted_bills += 1
                 except Exception as bill_error:
                     errors.append({
                         'model': 'account.move',
-                        'id': bill.id,
-                        'name': bill.name,
+                        'id': bill_id,
                         'error': str(bill_error),
                     })
+                    if _is_db_cursor_closed_error(bill_error):
+                        fatal_db_error = str(bill_error)
+                        break
+
+            if fatal_db_error:
+                return {
+                    'error': 'Bulk deletion interrupted by database cursor/connection closure',
+                    'details': fatal_db_error,
+                    'summary': {
+                        'requested_limits': {
+                            'limit': common_limit,
+                            'limit_payments': payments_limit,
+                            'limit_bills': bills_limit,
+                        },
+                        'payments': {'found': total_payments, 'deleted': deleted_payments},
+                        'bills': {'found': total_bills, 'deleted': deleted_bills},
+                        'errors_count': len(errors),
+                    },
+                    'errors': errors,
+                }
 
             _logger.info(
                 "Bulk delete finished. payments: %s/%s, bills: %s/%s, errors: %s",
@@ -842,6 +914,11 @@ class BillReceiveController(http.Controller):
             return {
                 'success': 'Bulk deletion completed (no reversals)',
                 'summary': {
+                    'requested_limits': {
+                        'limit': common_limit,
+                        'limit_payments': payments_limit,
+                        'limit_bills': bills_limit,
+                    },
                     'payments': {
                         'found': total_payments,
                         'deleted': deleted_payments,
@@ -855,7 +932,10 @@ class BillReceiveController(http.Controller):
                 'errors': errors,
             }
         except Exception as e:
-            request.env.cr.rollback()
+            try:
+                request.env.cr.rollback()
+            except Exception:
+                pass
             _logger.error("Failed to bulk delete bills/payments: %s", str(e), exc_info=True)
             return {
                 'error': 'Failed to bulk delete bills and payments',
