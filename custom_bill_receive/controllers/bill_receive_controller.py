@@ -336,8 +336,11 @@ class BillReceiveController(http.Controller):
                             ).create({
                                 'payment_date': payment_data['payment_date'],
                                 'journal_id': payment_data['journal_id'],
-                                'amount': payment_data['amount'],
                             })
+                            # amount is a computed field on the wizard – writing it after
+                            # creation ensures the explicit value overrides the computed
+                            # amount_residual default and is not silently ignored.
+                            payment_register.amount = payment_data['amount']
                             payment = payment_register._create_payments()
                             _logger.info(f"Registered payment {payment.id} for bill {bill.id}")
 
