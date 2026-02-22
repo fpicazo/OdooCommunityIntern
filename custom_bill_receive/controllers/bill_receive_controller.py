@@ -537,7 +537,6 @@ class BillReceiveController(http.Controller):
 
             payments = self._get_related_payments(move)
             deleted_payment_ids = []
-            reversed_payment_move_ids = []
 
             for payment in payments:
                 related_docs = self._get_payment_related_documents(payment)
@@ -556,12 +555,7 @@ class BillReceiveController(http.Controller):
 
                 payment_id = payment.id
                 if payment.state == 'posted':
-                    reversed_payment_moves = self._reverse_move(
-                        payment.move_id,
-                        reason=f"Auto reversal for delete request UUID {uuid}",
-                    )
-                    reversed_payment_move_ids.extend(reversed_payment_moves.ids)
-                    continue
+                    self._set_record_to_draft(payment)
 
                 try:
                     payment.unlink()
@@ -569,42 +563,34 @@ class BillReceiveController(http.Controller):
                 except Exception as payment_unlink_error:
                     if not self._is_sequence_chain_delete_error(payment_unlink_error):
                         raise
-                    _logger.warning(
-                        "Payment %s could not be deleted due to sequence chain.",
-                        payment_id,
-                    )
+                    return {
+                        'error': (
+                            f"Payment {payment_id} cannot be deleted due to sequence chain rules. "
+                            "It was set to draft, but Odoo still blocks deletion."
+                        ),
+                        'details': str(payment_unlink_error),
+                    }
 
             if move.line_ids:
                 move.line_ids.remove_move_reconcile()
 
             deleted_move_id = move.id
             deleted_move_name = move.name
-            reversed_document_ids = []
-            was_reversed_instead_of_deleted = move.state == 'posted'
             if move.state == 'posted':
-                reversed_moves = self._reverse_move(
-                    move,
-                    reason=f"Auto reversal for delete request UUID {uuid}",
-                )
-                reversed_document_ids = reversed_moves.ids
-                _logger.warning(
-                    "Document %s (id=%s) is posted; created reversal move(s): %s",
-                    deleted_move_name,
-                    deleted_move_id,
-                    reversed_document_ids,
-                )
-            else:
-                try:
-                    move.unlink()
-                except Exception as move_unlink_error:
-                    if not self._is_sequence_chain_delete_error(move_unlink_error):
-                        raise
-                    _logger.warning(
-                        "Draft document %s (id=%s) could not be deleted due to sequence chain.",
-                        deleted_move_name,
-                        deleted_move_id,
-                    )
-                    was_reversed_instead_of_deleted = True
+                self._set_record_to_draft(move)
+
+            try:
+                move.unlink()
+            except Exception as move_unlink_error:
+                if not self._is_sequence_chain_delete_error(move_unlink_error):
+                    raise
+                return {
+                    'error': (
+                        f"{document_type.capitalize()} cannot be deleted due to sequence chain rules. "
+                        "It was set to draft, but Odoo still blocks deletion."
+                    ),
+                    'details': str(move_unlink_error),
+                }
 
             _logger.info(
                 "Deleted %s %s (id=%s, uuid=%s) and related payments %s",
@@ -616,16 +602,10 @@ class BillReceiveController(http.Controller):
             )
 
             return {
-                'success': (
-                    f"{document_type.capitalize()} reversed (not deleted due to sequence chain) and related payments processed"
-                    if was_reversed_instead_of_deleted
-                    else f"{document_type.capitalize()} and related payments deleted"
-                ),
+                'success': f"{document_type.capitalize()} and related payments deleted",
                 'uuid': uuid,
-                'deleted_document_id': False if was_reversed_instead_of_deleted else deleted_move_id,
+                'deleted_document_id': deleted_move_id,
                 'deleted_payment_ids': deleted_payment_ids,
-                'reversed_document_ids': reversed_document_ids,
-                'reversed_payment_move_ids': reversed_payment_move_ids,
             }
         except Exception as e:
             request.env.cr.rollback()
