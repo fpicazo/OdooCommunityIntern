@@ -32,6 +32,17 @@ class BillReceiveController(http.Controller):
         )
         return ' '.join(text.split())
 
+    def _normalize_vat(self, vat):
+        raw = (vat or '').strip().upper().replace(' ', '').replace('-', '')
+        if not raw:
+            return raw
+        if len(raw) >= 2 and raw[:2].isalpha():
+            return raw
+        # Mexican RFC without country prefix -> expected by Odoo as MX + RFC
+        if raw.isalnum() and len(raw) in (12, 13):
+            return f"MX{raw}"
+        return raw
+
     def _extract_json_payload(self):
         try:
             raw = json.loads(request.httprequest.data.decode('utf-8'))
@@ -156,108 +167,114 @@ class BillReceiveController(http.Controller):
             errors = []
             for bill_data in bills:
                 try:
-                    partner = request.env['res.partner'].sudo().search([
-                        ('name', '=', bill_data['partner_id']['name']),
-                        ('vat', '=', bill_data['partner_id']['vat'])
-                    ], limit=1)
-                    if not partner:
-                        partner = request.env['res.partner'].sudo().create({
-                            'name': bill_data['partner_id']['name'],
-                            'vat': bill_data['partner_id']['vat'],
-                            'supplier_rank': 1,
-                        })
+                    with request.env.cr.savepoint():
+                        raw_vat = (bill_data.get('partner_id') or {}).get('vat', '')
+                        normalized_vat = self._normalize_vat(raw_vat)
+                        partner_name = (bill_data.get('partner_id') or {}).get('name')
 
-                    currency = None
-                    if 'currency_code' in bill_data:
-                        currency = request.env['res.currency'].sudo().search([
-                            ('name', '=', bill_data['currency_code'])
+                        partner = request.env['res.partner'].sudo().search([
+                            ('name', '=', partner_name),
+                            ('vat', 'in', [normalized_vat, raw_vat]),
                         ], limit=1)
-                        if not currency:
-                            errors.append({'bill_data': bill_data, 'error': f"Currency '{bill_data['currency_code']}' not found."})
-                            continue
-                    else:
-                        currency = request.env['res.currency'].sudo().search([('name', '=', 'USD')], limit=1)
-                        if not currency:
-                            errors.append({'bill_data': bill_data, 'error': "USD currency not found."})
-                            continue
-
-                    invoice_line_ids = []
-                    for line in bill_data['invoice_line_ids']:
-                        product = request.env['product.product'].sudo().search([
-                            ('name', '=', line['name'])
-                        ], limit=1)
-                        if not product:
-                            product = request.env['product.product'].sudo().create({
-                                'name': line['name'],
-                                'type': 'service',
+                        if not partner:
+                            partner = request.env['res.partner'].sudo().create({
+                                'name': partner_name,
+                                'vat': normalized_vat,
+                                'supplier_rank': 1,
                             })
+                        elif normalized_vat and partner.vat != normalized_vat:
+                            partner.sudo().write({'vat': normalized_vat})
 
-                        tax_ids = []
-                        for tax in line.get('tax_ids', []):
-                            existing_tax = request.env['account.tax'].sudo().search([
-                                ('name', '=', tax['name'])
+                        currency = None
+                        if 'currency_code' in bill_data:
+                            currency = request.env['res.currency'].sudo().search([
+                                ('name', '=', bill_data['currency_code'])
                             ], limit=1)
-                            if existing_tax:
-                                tax_ids.append(existing_tax.id)
-                            else:
-                                try:
-                                    new_tax = request.env['account.tax'].sudo().create({
-                                        'name': tax['name'],
-                                        'amount': tax['amount'],
-                                        'type_tax_use': 'purchase',
-                                    })
-                                    tax_ids.append(new_tax.id)
-                                except Exception as e:
-                                    errors.append({
-                                        'line_item': line,
-                                        'error': f'Failed to create tax: {str(e)}'
-                                    })
-                                    continue
+                            if not currency:
+                                errors.append({'bill_data': bill_data, 'error': f"Currency '{bill_data['currency_code']}' not found."})
+                                continue
+                        else:
+                            currency = request.env['res.currency'].sudo().search([('name', '=', 'USD')], limit=1)
+                            if not currency:
+                                errors.append({'bill_data': bill_data, 'error': "USD currency not found."})
+                                continue
 
-                        invoice_line_ids.append((0, 0, {
-                            'name': line['name'],
-                            'quantity': line['quantity'],
-                            'price_unit': line['price_unit'],
-                            'account_id': line['account_id'],
-                            'product_id': product.id,
-                            'tax_ids': [(6, 0, tax_ids)]
-                        }))
+                        invoice_line_ids = []
+                        for line in bill_data['invoice_line_ids']:
+                            product = request.env['product.product'].sudo().search([
+                                ('name', '=', line['name'])
+                            ], limit=1)
+                            if not product:
+                                product = request.env['product.product'].sudo().create({
+                                    'name': line['name'],
+                                    'type': 'service',
+                                })
 
-                    bill_vals = {
-                        'move_type': bill_data['move_type'],
-                        'journal_id': bill_data['journal_id'],
-                        'ref': bill_data.get('name', ''),
-                        'invoice_date': bill_data['invoice_date'],
-                        'invoice_date_due': bill_data.get('invoice_date_due', bill_data['invoice_date']),
-                        'partner_id': partner.id,
-                        'invoice_line_ids': invoice_line_ids,
-                        'l10n_mx_edi_cfdi_uuid': bill_data.get('l10n_mx_edi_cfdi_uuid', ''),
-                        'currency_id': currency.id
-                    }
+                            tax_ids = []
+                            for tax in line.get('tax_ids', []):
+                                existing_tax = request.env['account.tax'].sudo().search([
+                                    ('name', '=', tax['name'])
+                                ], limit=1)
+                                if existing_tax:
+                                    tax_ids.append(existing_tax.id)
+                                else:
+                                    try:
+                                        new_tax = request.env['account.tax'].sudo().create({
+                                            'name': tax['name'],
+                                            'amount': tax['amount'],
+                                            'type_tax_use': 'purchase',
+                                        })
+                                        tax_ids.append(new_tax.id)
+                                    except Exception as e:
+                                        errors.append({
+                                            'line_item': line,
+                                            'error': f'Failed to create tax: {str(e)}'
+                                        })
+                                        continue
 
-                    bill = request.env['account.move'].sudo().create(bill_vals)
-                    bill.action_post()
+                            invoice_line_ids.append((0, 0, {
+                                'name': line['name'],
+                                'quantity': line['quantity'],
+                                'price_unit': line['price_unit'],
+                                'account_id': line['account_id'],
+                                'product_id': product.id,
+                                'tax_ids': [(6, 0, tax_ids)]
+                            }))
 
-                    if 'payment_data' in bill_data:
-                        payment_data = bill_data['payment_data']
-                        payment_register = request.env['account.payment.register'].sudo().with_context(
-                            active_model='account.move',
-                            active_ids=[bill.id],
-                        ).create({
-                            'payment_date': payment_data['payment_date'],
-                            'journal_id': payment_data['journal_id'],
-                            'amount': payment_data['amount'],
-                        })
-                        payment = payment_register._create_payments()
-                        _logger.info(f"Registered payment {payment.id} for bill {bill.id}")
+                        bill_vals = {
+                            'move_type': bill_data['move_type'],
+                            'journal_id': bill_data['journal_id'],
+                            'ref': bill_data.get('name', ''),
+                            'invoice_date': bill_data['invoice_date'],
+                            'invoice_date_due': bill_data.get('invoice_date_due', bill_data['invoice_date']),
+                            'partner_id': partner.id,
+                            'invoice_line_ids': invoice_line_ids,
+                            'l10n_mx_edi_cfdi_uuid': bill_data.get('l10n_mx_edi_cfdi_uuid', ''),
+                            'currency_id': currency.id
+                        }
 
-                    created_bills.append(bill.id)
-                    cfdi_uuid = bill_data.get('l10n_mx_edi_cfdi_uuid', '')
-                    if cfdi_uuid:
-                        bill.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
-                    _logger.info(f"Created bill {bill.id} for {bill_data['partner_id']['name']}")
+                        bill = request.env['account.move'].sudo().create(bill_vals)
+                        bill.action_post()
+
+                        if 'payment_data' in bill_data:
+                            payment_data = bill_data['payment_data']
+                            payment_register = request.env['account.payment.register'].sudo().with_context(
+                                active_model='account.move',
+                                active_ids=[bill.id],
+                            ).create({
+                                'payment_date': payment_data['payment_date'],
+                                'journal_id': payment_data['journal_id'],
+                                'amount': payment_data['amount'],
+                            })
+                            payment = payment_register._create_payments()
+                            _logger.info(f"Registered payment {payment.id} for bill {bill.id}")
+
+                        created_bills.append(bill.id)
+                        cfdi_uuid = bill_data.get('l10n_mx_edi_cfdi_uuid', '')
+                        if cfdi_uuid:
+                            bill.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
+                        _logger.info(f"Created bill {bill.id} for {partner_name}")
                 except Exception as e:
-                    request.env.cr.rollback()
                     _logger.error(f"Error processing bill: {str(e)}", exc_info=True)
                     errors.append({'bill_data': bill_data, 'error': str(e)})
                     continue
@@ -295,116 +312,121 @@ class BillReceiveController(http.Controller):
             errors = []
             for invoice_data in invoices:
                 try:
-                    partner = request.env['res.partner'].sudo().search([
-                        ('name', '=', invoice_data['partner_id']['name']),
-                        ('vat', '=', invoice_data['partner_id']['vat'])
-                    ], limit=1)
-                    if not partner:
-                        partner = request.env['res.partner'].sudo().create({
-                            'name': invoice_data['partner_id']['name'],
-                            'vat': invoice_data['partner_id']['vat'],
-                            'customer_rank': 1,
-                        })
-
-                    currency = request.env['res.currency'].sudo().search([
-                        ('name', '=', invoice_data['currency_code'])
-                    ], limit=1)
-                    if not currency:
-                        raise ValueError(f"Currency '{invoice_data['currency_code']}' not found.")
-
-                    invoice_line_ids = []
-                    for line in invoice_data['invoice_line_ids']:
-                        product = request.env['product.product'].sudo().search([
-                            ('name', '=', line['name'])
+                    with request.env.cr.savepoint():
+                        raw_vat = (invoice_data.get('partner_id') or {}).get('vat', '')
+                        normalized_vat = self._normalize_vat(raw_vat)
+                        partner_name = (invoice_data.get('partner_id') or {}).get('name')
+                        partner = request.env['res.partner'].sudo().search([
+                            ('name', '=', partner_name),
+                            ('vat', 'in', [normalized_vat, raw_vat]),
                         ], limit=1)
-                        if not product:
-                            product = request.env['product.product'].sudo().create({
-                                'name': line['name'],
-                                'type': 'service',
+                        if not partner:
+                            partner = request.env['res.partner'].sudo().create({
+                                'name': partner_name,
+                                'vat': normalized_vat,
+                                'customer_rank': 1,
                             })
+                        elif normalized_vat and partner.vat != normalized_vat:
+                            partner.sudo().write({'vat': normalized_vat})
 
-                        tax_ids = []
-                        for tax in line.get('tax_ids', []):
-                            existing_tax = request.env['account.tax'].sudo().search([
-                                ('name', '=', tax['name'])
+                        currency = request.env['res.currency'].sudo().search([
+                            ('name', '=', invoice_data['currency_code'])
+                        ], limit=1)
+                        if not currency:
+                            raise ValueError(f"Currency '{invoice_data['currency_code']}' not found.")
+
+                        invoice_line_ids = []
+                        for line in invoice_data['invoice_line_ids']:
+                            product = request.env['product.product'].sudo().search([
+                                ('name', '=', line['name'])
                             ], limit=1)
-                            if existing_tax:
-                                tax_ids.append(existing_tax.id)
-                            else:
-                                new_tax = request.env['account.tax'].sudo().create({
-                                    'name': tax['name'],
-                                    'amount': tax['amount'],
-                                    'type_tax_use': 'sale',
+                            if not product:
+                                product = request.env['product.product'].sudo().create({
+                                    'name': line['name'],
+                                    'type': 'service',
                                 })
-                                tax_ids.append(new_tax.id)
 
-                        resolved_account_id = False
-                        requested_account_id = line.get('account_id')
-                        if requested_account_id:
-                            requested_account = request.env['account.account'].sudo().browse(requested_account_id).exists()
-                            if requested_account and requested_account.account_type not in ('asset_receivable', 'liability_payable'):
-                                resolved_account_id = requested_account.id
-                            else:
-                                _logger.warning(
-                                    "Invalid account_id %s for invoice line '%s'. "
-                                    "Expected an income/other account, not receivable/payable.",
-                                    requested_account_id, line['name']
+                            tax_ids = []
+                            for tax in line.get('tax_ids', []):
+                                existing_tax = request.env['account.tax'].sudo().search([
+                                    ('name', '=', tax['name'])
+                                ], limit=1)
+                                if existing_tax:
+                                    tax_ids.append(existing_tax.id)
+                                else:
+                                    new_tax = request.env['account.tax'].sudo().create({
+                                        'name': tax['name'],
+                                        'amount': tax['amount'],
+                                        'type_tax_use': 'sale',
+                                    })
+                                    tax_ids.append(new_tax.id)
+
+                            resolved_account_id = False
+                            requested_account_id = line.get('account_id')
+                            if requested_account_id:
+                                requested_account = request.env['account.account'].sudo().browse(requested_account_id).exists()
+                                if requested_account and requested_account.account_type not in ('asset_receivable', 'liability_payable'):
+                                    resolved_account_id = requested_account.id
+                                else:
+                                    _logger.warning(
+                                        "Invalid account_id %s for invoice line '%s'. "
+                                        "Expected an income/other account, not receivable/payable.",
+                                        requested_account_id, line['name']
+                                    )
+
+                            if not resolved_account_id:
+                                income_account = product.property_account_income_id or product.categ_id.property_account_income_categ_id
+                                if income_account and income_account.account_type not in ('asset_receivable', 'liability_payable'):
+                                    resolved_account_id = income_account.id
+
+                            if not resolved_account_id:
+                                raise ValueError(
+                                    f"No valid income account found for invoice line '{line['name']}'. "
+                                    "Provide a valid income account_id."
                                 )
 
-                        if not resolved_account_id:
-                            income_account = product.property_account_income_id or product.categ_id.property_account_income_categ_id
-                            if income_account and income_account.account_type not in ('asset_receivable', 'liability_payable'):
-                                resolved_account_id = income_account.id
+                            invoice_line_ids.append((0, 0, {
+                                'name': line['name'],
+                                'quantity': line['quantity'],
+                                'price_unit': line['price_unit'],
+                                'account_id': resolved_account_id,
+                                'product_id': product.id,
+                                'tax_ids': [(6, 0, tax_ids)]
+                            }))
 
-                        if not resolved_account_id:
-                            raise ValueError(
-                                f"No valid income account found for invoice line '{line['name']}'. "
-                                "Provide a valid income account_id."
-                            )
+                        modo_pago_code = invoice_data.get('modo_pago', '99')
+                        payment_method = request.env['l10n_mx_edi.payment.method'].sudo().search([
+                            ('code', '=', modo_pago_code)
+                        ], limit=1)
 
-                        invoice_line_ids.append((0, 0, {
-                            'name': line['name'],
-                            'quantity': line['quantity'],
-                            'price_unit': line['price_unit'],
-                            'account_id': resolved_account_id,
-                            'product_id': product.id,
-                            'tax_ids': [(6, 0, tax_ids)]
-                        }))
+                        invoice_vals = {
+                            'move_type': invoice_data['move_type'],
+                            'journal_id': invoice_data['journal_id'],
+                            'ref': invoice_data.get('name', ''),
+                            'l10n_mx_edi_cfdi_uuid': invoice_data.get('l10n_mx_edi_cfdi_uuid', ''),
+                            'invoice_date': invoice_data['invoice_date'],
+                            'invoice_date_due': invoice_data.get('invoice_date_due', invoice_data['invoice_date']),
+                            'partner_id': partner.id,
+                            "l10n_mx_edi_cfdi_to_public": False,
+                            'invoice_line_ids': invoice_line_ids,
+                            'l10n_mx_edi_usage': invoice_data.get('uso_cfdi', 'G03'),
+                            'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
+                            'currency_id': currency.id
+                        }
+                        
+                        if invoice_data.get('invoice_name'):
+                            invoice_vals['name'] = invoice_data['invoice_name']
 
-                    modo_pago_code = invoice_data.get('modo_pago', '99')
-                    payment_method = request.env['l10n_mx_edi.payment.method'].sudo().search([
-                        ('code', '=', modo_pago_code)
-                    ], limit=1)
+                        invoice = request.env['account.move'].sudo().create(invoice_vals)
+                        invoice.action_post()
+                        created_invoices.append(invoice.id)
 
-                    invoice_vals = {
-                        'move_type': invoice_data['move_type'],
-                        'journal_id': invoice_data['journal_id'],
-                        'ref': invoice_data.get('name', ''),
-                        'l10n_mx_edi_cfdi_uuid': invoice_data.get('l10n_mx_edi_cfdi_uuid', ''),
-                        'invoice_date': invoice_data['invoice_date'],
-                        'invoice_date_due': invoice_data.get('invoice_date_due', invoice_data['invoice_date']),
-                        'partner_id': partner.id,
-                        "l10n_mx_edi_cfdi_to_public": False,
-                        'invoice_line_ids': invoice_line_ids,
-                        'l10n_mx_edi_usage': invoice_data.get('uso_cfdi', 'G03'),
-                        'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
-                        'currency_id': currency.id
-                    }
-                    
-                    if invoice_data.get('invoice_name'):
-                        invoice_vals['name'] = invoice_data['invoice_name']
+                        cfdi_uuid = invoice_data.get('l10n_mx_edi_cfdi_uuid', '')
+                        if cfdi_uuid:
+                            invoice.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
 
-                    invoice = request.env['account.move'].sudo().create(invoice_vals)
-                    invoice.action_post()
-                    created_invoices.append(invoice.id)
-
-                    cfdi_uuid = invoice_data.get('l10n_mx_edi_cfdi_uuid', '')
-                    if cfdi_uuid:
-                        invoice.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
-
-                    _logger.info(f"Created invoice {invoice.id} for {invoice_data['partner_id']['name']}")
+                        _logger.info(f"Created invoice {invoice.id} for {partner_name}")
                 except Exception as e:
-                    request.env.cr.rollback()
                     _logger.error(f"Error processing invoice: {str(e)}", exc_info=True)
                     errors.append({'invoice_data': invoice_data, 'error': str(e)})
                     continue
