@@ -791,14 +791,21 @@ class BillReceiveController(http.Controller):
             payments_limit = _parse_limit(limit_payments, payload.get('limit_payments')) or common_limit
             bills_limit = _parse_limit(limit_bills, payload.get('limit_bills')) or common_limit
 
-            payment_model = request.env['account.payment'].sudo()
             move_model = request.env['account.move'].sudo()
+            payment_model = request.env['account.payment'].sudo()
 
             # Freeze IDs first; avoids extra lazy reads while records are being deleted.
-            payment_ids = payment_model.search([], limit=payments_limit).ids
+            # Prefer deleting payment journal entries (account.move) instead of account.payment
+            # to avoid payment state validations on corrupted/inconsistent payment records.
+            if 'payment_id' in move_model._fields:
+                payment_entry_ids = move_model.search([('payment_id', '!=', False)], limit=payments_limit).ids
+                payment_delete_mode = 'payment_moves'
+            else:
+                payment_entry_ids = payment_model.search([], limit=payments_limit).ids
+                payment_delete_mode = 'payments'
             bill_ids = move_model.search([('move_type', 'in', ['in_invoice', 'in_refund'])], limit=bills_limit).ids
 
-            total_payments = len(payment_ids)
+            total_payments = len(payment_entry_ids)
             total_bills = len(bill_ids)
             deleted_payments = 0
             deleted_bills = 0
@@ -810,23 +817,32 @@ class BillReceiveController(http.Controller):
                 return 'cursor already closed' in msg or 'connection already closed' in msg
 
             # Delete payments first to avoid reconciliation/foreign-key blockers on bills.
-            for payment_id in payment_ids:
+            for payment_entry_id in payment_entry_ids:
                 try:
-                    payment_force = payment_model.browse(payment_id).exists().with_context(
-                        force_delete=True,
-                        check_move_validity=False
-                    )
-                    if not payment_force:
-                        continue
-
-                    if payment_force.move_id and payment_force.move_id.line_ids:
-                        payment_force.move_id.line_ids.remove_move_reconcile()
-                    payment_force.unlink()
+                    if payment_delete_mode == 'payment_moves':
+                        payment_move_force = move_model.browse(payment_entry_id).exists().with_context(
+                            force_delete=True,
+                            check_move_validity=False
+                        )
+                        if not payment_move_force:
+                            continue
+                        if payment_move_force.line_ids:
+                            payment_move_force.line_ids.remove_move_reconcile()
+                        payment_move_force.unlink()
+                    else:
+                        payment_force = payment_model.browse(payment_entry_id).exists().with_context(
+                            force_delete=True,
+                            check_move_validity=False,
+                            skip_account_move_synchronization=True
+                        )
+                        if not payment_force:
+                            continue
+                        payment_force.unlink()
                     deleted_payments += 1
                 except Exception as payment_error:
                     errors.append({
-                        'model': 'account.payment',
-                        'id': payment_id,
+                        'model': 'account.move' if payment_delete_mode == 'payment_moves' else 'account.payment',
+                        'id': payment_entry_id,
                         'error': str(payment_error),
                     })
                     if _is_db_cursor_closed_error(payment_error):
@@ -907,6 +923,7 @@ class BillReceiveController(http.Controller):
                         'limit_payments': payments_limit,
                         'limit_bills': bills_limit,
                     },
+                    'payment_delete_mode': payment_delete_mode,
                     'payments': {
                         'found': total_payments,
                         'deleted': deleted_payments,
