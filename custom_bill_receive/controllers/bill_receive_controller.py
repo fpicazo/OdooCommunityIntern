@@ -58,6 +58,33 @@ class BillReceiveController(http.Controller):
             return
         raise ValueError(f"Cannot set record {record._name}({record.id}) to draft.")
 
+    def _is_sequence_chain_delete_error(self, error):
+        message = str(error or '').lower()
+        return (
+            'sequence' in message and 'last' in message and 'chain' in message
+        ) or (
+            'número de secuencia' in message and 'no es el último' in message
+        ) or (
+            'debe revertirlo' in message
+        )
+
+    def _reverse_move(self, move, reason):
+        reversal_model = request.env['account.move.reversal'].sudo()
+        reversal_ctx = dict(request.env.context, active_model='account.move', active_ids=move.ids)
+        reversal_vals = {
+            'date': fields.Date.context_today(request.env.user),
+            'reason': reason,
+        }
+        if 'journal_id' in reversal_model._fields:
+            reversal_vals['journal_id'] = move.journal_id.id
+
+        reversal = reversal_model.with_context(reversal_ctx).create(reversal_vals)
+        reversal.reverse_moves()
+
+        if 'new_move_ids' in reversal._fields:
+            return reversal.new_move_ids
+        return request.env['account.move'].sudo().browse()
+
     def _get_related_payments(self, move):
         move_lines = move.line_ids
         partials = (move_lines.matched_debit_ids | move_lines.matched_credit_ids)
@@ -510,6 +537,7 @@ class BillReceiveController(http.Controller):
 
             payments = self._get_related_payments(move)
             deleted_payment_ids = []
+            reversed_payment_move_ids = []
 
             for payment in payments:
                 related_docs = self._get_payment_related_documents(payment)
@@ -529,8 +557,24 @@ class BillReceiveController(http.Controller):
                 if payment.state == 'posted':
                     self._set_record_to_draft(payment)
 
-                deleted_payment_ids.append(payment.id)
-                payment.unlink()
+                payment_id = payment.id
+                try:
+                    payment.unlink()
+                    deleted_payment_ids.append(payment_id)
+                except Exception as payment_unlink_error:
+                    if not self._is_sequence_chain_delete_error(payment_unlink_error):
+                        raise
+                    if payment.move_id and payment.move_id.state == 'posted':
+                        reversed_payment_moves = self._reverse_move(
+                            payment.move_id,
+                            reason=f"Auto reversal for delete request UUID {uuid}",
+                        )
+                        reversed_payment_move_ids.extend(reversed_payment_moves.ids)
+                    _logger.warning(
+                        "Payment %s could not be deleted due to sequence chain; reversed payment move(s): %s",
+                        payment_id,
+                        reversed_payment_move_ids,
+                    )
 
             if move.line_ids:
                 move.line_ids.remove_move_reconcile()
@@ -540,7 +584,29 @@ class BillReceiveController(http.Controller):
 
             deleted_move_id = move.id
             deleted_move_name = move.name
-            move.unlink()
+            reversed_document_ids = []
+            was_reversed_instead_of_deleted = False
+            try:
+                move.unlink()
+            except Exception as move_unlink_error:
+                if not self._is_sequence_chain_delete_error(move_unlink_error):
+                    raise
+
+                if move.state != 'posted':
+                    move.action_post()
+
+                reversed_moves = self._reverse_move(
+                    move,
+                    reason=f"Auto reversal for delete request UUID {uuid}",
+                )
+                reversed_document_ids = reversed_moves.ids
+                was_reversed_instead_of_deleted = True
+                _logger.warning(
+                    "Document %s (id=%s) not deleted due to sequence chain; reversed move(s): %s",
+                    deleted_move_name,
+                    deleted_move_id,
+                    reversed_document_ids,
+                )
 
             _logger.info(
                 "Deleted %s %s (id=%s, uuid=%s) and related payments %s",
@@ -552,10 +618,16 @@ class BillReceiveController(http.Controller):
             )
 
             return {
-                'success': f"{document_type.capitalize()} and related payments deleted",
+                'success': (
+                    f"{document_type.capitalize()} reversed (not deleted due to sequence chain) and related payments processed"
+                    if was_reversed_instead_of_deleted
+                    else f"{document_type.capitalize()} and related payments deleted"
+                ),
                 'uuid': uuid,
-                'deleted_document_id': deleted_move_id,
+                'deleted_document_id': False if was_reversed_instead_of_deleted else deleted_move_id,
                 'deleted_payment_ids': deleted_payment_ids,
+                'reversed_document_ids': reversed_document_ids,
+                'reversed_payment_move_ids': reversed_payment_move_ids,
             }
         except Exception as e:
             request.env.cr.rollback()
