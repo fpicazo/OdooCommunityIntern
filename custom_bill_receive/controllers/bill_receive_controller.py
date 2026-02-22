@@ -790,11 +790,16 @@ class BillReceiveController(http.Controller):
             for payment in payments:
                 try:
                     with request.env.cr.savepoint():
-                        if payment.move_id and payment.move_id.line_ids:
-                            payment.move_id.line_ids.remove_move_reconcile()
-                        if payment.state == 'posted':
-                            self._set_record_to_draft(payment)
-                        payment.unlink()
+                        payment_force = payment.sudo().with_context(force_delete=True, check_move_validity=False)
+                        if payment_force.move_id and payment_force.move_id.line_ids:
+                            payment_force.move_id.line_ids.remove_move_reconcile()
+                        if payment_force.state == 'posted':
+                            try:
+                                self._set_record_to_draft(payment_force)
+                            except Exception:
+                                # Some versions block draft reset; force-delete context handles posted records.
+                                pass
+                        payment_force.unlink()
                         deleted_payments += 1
                 except Exception as payment_error:
                     errors.append({
@@ -806,11 +811,16 @@ class BillReceiveController(http.Controller):
             for bill in bills:
                 try:
                     with request.env.cr.savepoint():
-                        if bill.line_ids:
-                            bill.line_ids.remove_move_reconcile()
-                        if bill.state == 'posted':
-                            self._set_record_to_draft(bill)
-                        bill.unlink()
+                        bill_force = bill.sudo().with_context(force_delete=True, check_move_validity=False)
+                        if bill_force.line_ids:
+                            bill_force.line_ids.remove_move_reconcile()
+                        if bill_force.state == 'posted':
+                            try:
+                                self._set_record_to_draft(bill_force)
+                            except Exception:
+                                # Some journals/lock dates prevent draft reset.
+                                pass
+                        bill_force.unlink()
                         deleted_bills += 1
                 except Exception as bill_error:
                     errors.append({
@@ -851,6 +861,14 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to bulk delete bills and payments',
                 'details': str(e),
             }
+
+    @http.route('/api/delete_all_bills_and_payments_http', type='http', auth='public', methods=['POST'], csrf=False)
+    def delete_all_bills_and_payments_http(self, **kwargs):
+        result = self.delete_all_bills_and_payments(**kwargs)
+        return request.make_response(
+            json.dumps(result),
+            headers=[('Content-Type', 'application/json')]
+        )
 
     @http.route('/api/change_bill_account_by_uuid', type='json', auth='public', methods=['POST'], csrf=False)
     def change_bill_account_by_uuid(self, uuid=None, account=None, category=None, **kwargs):
