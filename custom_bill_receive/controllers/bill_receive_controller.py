@@ -1141,10 +1141,12 @@ class PaymentPurgeController(http.Controller):
             if delete_moves and move_ids:
                 # If account_move has payment_id column, detach it to avoid any FK/triggers
                 try:
+                    cr.execute("SAVEPOINT purge_detach")
                     cr.execute("UPDATE account_move SET payment_id = NULL WHERE payment_id = ANY(%s)", (payment_ids,))
+                    cr.execute("RELEASE SAVEPOINT purge_detach")
                 except Exception:
-                    # column might not exist or no permission; ignore
-                    pass
+                    # column might not exist or no permission; roll back only this step
+                    cr.execute("ROLLBACK TO SAVEPOINT purge_detach")
 
                 # 3) collect move line ids
                 cr.execute("SELECT id FROM account_move_line WHERE move_id = ANY(%s)", (move_ids,))
