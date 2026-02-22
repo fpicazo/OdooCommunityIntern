@@ -66,6 +66,23 @@ class BillReceiveController(http.Controller):
         )
         return str(value).strip().upper()
 
+    def _extract_reference_value(self, data):
+        value = (
+            (data or {}).get('name')
+            or (data or {}).get('ref')
+            or (data or {}).get('invoice_name')
+            or ''
+        )
+        return str(value).strip()
+
+    def _find_move_by_reference(self, reference, allowed_move_types, allowed_states=None):
+        account_move = request.env['account.move'].sudo()
+        domain = [('move_type', 'in', allowed_move_types), ('ref', '=', reference)]
+        if allowed_states:
+            domain.append(('state', 'in', allowed_states))
+        move = account_move.search(domain, limit=1)
+        return account_move, move
+
     def _build_uuid_domain(self, account_move, uuid):
         uuid_filters = []
         if 'folio_fiscal' in account_move._fields:
@@ -181,38 +198,34 @@ class BillReceiveController(http.Controller):
 
             created_bills = []
             errors = []
-            seen_uuids = set()
+            seen_references = set()
             for bill_data in bills:
                 try:
                     with request.env.cr.savepoint():
-                        cfdi_uuid = self._extract_uuid_value(bill_data)
-                        if cfdi_uuid:
-                            if cfdi_uuid in seen_uuids:
+                        reference = self._extract_reference_value(bill_data)
+                        if reference:
+                            if reference in seen_references:
                                 errors.append({
                                     'bill_data': bill_data,
-                                    'error': f"Duplicate UUID in request payload: '{cfdi_uuid}'",
+                                    'error': f"Duplicate reference in request payload: '{reference}'",
                                 })
                                 continue
 
                             requested_move_type = bill_data.get('move_type')
                             allowed_move_types = [requested_move_type] if requested_move_type else ['in_invoice', 'in_refund']
-                            _, existing_move = self._find_move_by_uuid(
-                                uuid=cfdi_uuid,
+                            _, existing_move = self._find_move_by_reference(
+                                reference=reference,
                                 allowed_move_types=allowed_move_types,
                             )
-                            if existing_move is None:
-                                errors.append({
-                                    'bill_data': bill_data,
-                                    'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).',
-                                })
-                                continue
                             if existing_move:
                                 errors.append({
                                     'bill_data': bill_data,
-                                    'error': f"Duplicate UUID already exists on move id={existing_move.id}: '{cfdi_uuid}'",
+                                    'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
                                 })
                                 continue
-                            seen_uuids.add(cfdi_uuid)
+                            seen_references.add(reference)
+
+                        cfdi_uuid = self._extract_uuid_value(bill_data)
 
                         raw_vat = (bill_data.get('partner_id') or {}).get('vat', '')
                         normalized_vat = self._normalize_vat(raw_vat)
@@ -368,38 +381,34 @@ class BillReceiveController(http.Controller):
 
             created_invoices = []
             errors = []
-            seen_uuids = set()
+            seen_references = set()
             for invoice_data in invoices:
                 try:
                     with request.env.cr.savepoint():
-                        cfdi_uuid = self._extract_uuid_value(invoice_data)
-                        if cfdi_uuid:
-                            if cfdi_uuid in seen_uuids:
+                        reference = self._extract_reference_value(invoice_data)
+                        if reference:
+                            if reference in seen_references:
                                 errors.append({
                                     'invoice_data': invoice_data,
-                                    'error': f"Duplicate UUID in request payload: '{cfdi_uuid}'",
+                                    'error': f"Duplicate reference in request payload: '{reference}'",
                                 })
                                 continue
 
                             requested_move_type = invoice_data.get('move_type')
                             allowed_move_types = [requested_move_type] if requested_move_type else ['out_invoice', 'out_refund']
-                            _, existing_move = self._find_move_by_uuid(
-                                uuid=cfdi_uuid,
+                            _, existing_move = self._find_move_by_reference(
+                                reference=reference,
                                 allowed_move_types=allowed_move_types,
                             )
-                            if existing_move is None:
-                                errors.append({
-                                    'invoice_data': invoice_data,
-                                    'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).',
-                                })
-                                continue
                             if existing_move:
                                 errors.append({
                                     'invoice_data': invoice_data,
-                                    'error': f"Duplicate UUID already exists on move id={existing_move.id}: '{cfdi_uuid}'",
+                                    'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
                                 })
                                 continue
-                            seen_uuids.add(cfdi_uuid)
+                            seen_references.add(reference)
+
+                        cfdi_uuid = self._extract_uuid_value(invoice_data)
 
                         raw_vat = (invoice_data.get('partner_id') or {}).get('vat', '')
                         normalized_vat = self._normalize_vat(raw_vat)
@@ -760,6 +769,87 @@ class BillReceiveController(http.Controller):
             return {
                 'error': 'Failed to delete document',
                 'details': str(e)
+            }
+
+    @http.route('/api/delete_all_bills_and_payments', type='json', auth='public', methods=['POST'], csrf=False)
+    def delete_all_bills_and_payments(self, **kwargs):
+        try:
+            payment_model = request.env['account.payment'].sudo()
+            move_model = request.env['account.move'].sudo()
+
+            payments = payment_model.search([])
+            bills = move_model.search([('move_type', 'in', ['in_invoice', 'in_refund'])])
+
+            total_payments = len(payments)
+            total_bills = len(bills)
+            deleted_payments = 0
+            deleted_bills = 0
+            errors = []
+
+            # Delete payments first to avoid reconciliation/foreign-key blockers on bills.
+            for payment in payments:
+                try:
+                    with request.env.cr.savepoint():
+                        if payment.move_id and payment.move_id.line_ids:
+                            payment.move_id.line_ids.remove_move_reconcile()
+                        if payment.state == 'posted':
+                            self._set_record_to_draft(payment)
+                        payment.unlink()
+                        deleted_payments += 1
+                except Exception as payment_error:
+                    errors.append({
+                        'model': 'account.payment',
+                        'id': payment.id,
+                        'error': str(payment_error),
+                    })
+
+            for bill in bills:
+                try:
+                    with request.env.cr.savepoint():
+                        if bill.line_ids:
+                            bill.line_ids.remove_move_reconcile()
+                        if bill.state == 'posted':
+                            self._set_record_to_draft(bill)
+                        bill.unlink()
+                        deleted_bills += 1
+                except Exception as bill_error:
+                    errors.append({
+                        'model': 'account.move',
+                        'id': bill.id,
+                        'name': bill.name,
+                        'error': str(bill_error),
+                    })
+
+            _logger.info(
+                "Bulk delete finished. payments: %s/%s, bills: %s/%s, errors: %s",
+                deleted_payments,
+                total_payments,
+                deleted_bills,
+                total_bills,
+                len(errors),
+            )
+
+            return {
+                'success': 'Bulk deletion completed (no reversals)',
+                'summary': {
+                    'payments': {
+                        'found': total_payments,
+                        'deleted': deleted_payments,
+                    },
+                    'bills': {
+                        'found': total_bills,
+                        'deleted': deleted_bills,
+                    },
+                    'errors_count': len(errors),
+                },
+                'errors': errors,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error("Failed to bulk delete bills/payments: %s", str(e), exc_info=True)
+            return {
+                'error': 'Failed to bulk delete bills and payments',
+                'details': str(e),
             }
 
     @http.route('/api/change_bill_account_by_uuid', type='json', auth='public', methods=['POST'], csrf=False)
