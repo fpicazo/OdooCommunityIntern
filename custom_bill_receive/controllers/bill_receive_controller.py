@@ -554,59 +554,57 @@ class BillReceiveController(http.Controller):
                 if payment.move_id.line_ids:
                     payment.move_id.line_ids.remove_move_reconcile()
 
-                if payment.state == 'posted':
-                    self._set_record_to_draft(payment)
-
                 payment_id = payment.id
+                if payment.state == 'posted':
+                    reversed_payment_moves = self._reverse_move(
+                        payment.move_id,
+                        reason=f"Auto reversal for delete request UUID {uuid}",
+                    )
+                    reversed_payment_move_ids.extend(reversed_payment_moves.ids)
+                    continue
+
                 try:
                     payment.unlink()
                     deleted_payment_ids.append(payment_id)
                 except Exception as payment_unlink_error:
                     if not self._is_sequence_chain_delete_error(payment_unlink_error):
                         raise
-                    if payment.move_id and payment.move_id.state == 'posted':
-                        reversed_payment_moves = self._reverse_move(
-                            payment.move_id,
-                            reason=f"Auto reversal for delete request UUID {uuid}",
-                        )
-                        reversed_payment_move_ids.extend(reversed_payment_moves.ids)
                     _logger.warning(
-                        "Payment %s could not be deleted due to sequence chain; reversed payment move(s): %s",
+                        "Payment %s could not be deleted due to sequence chain.",
                         payment_id,
-                        reversed_payment_move_ids,
                     )
 
             if move.line_ids:
                 move.line_ids.remove_move_reconcile()
 
-            if move.state == 'posted':
-                self._set_record_to_draft(move)
-
             deleted_move_id = move.id
             deleted_move_name = move.name
             reversed_document_ids = []
-            was_reversed_instead_of_deleted = False
-            try:
-                move.unlink()
-            except Exception as move_unlink_error:
-                if not self._is_sequence_chain_delete_error(move_unlink_error):
-                    raise
-
-                if move.state != 'posted':
-                    move.action_post()
-
+            was_reversed_instead_of_deleted = move.state == 'posted'
+            if move.state == 'posted':
                 reversed_moves = self._reverse_move(
                     move,
                     reason=f"Auto reversal for delete request UUID {uuid}",
                 )
                 reversed_document_ids = reversed_moves.ids
-                was_reversed_instead_of_deleted = True
                 _logger.warning(
-                    "Document %s (id=%s) not deleted due to sequence chain; reversed move(s): %s",
+                    "Document %s (id=%s) is posted; created reversal move(s): %s",
                     deleted_move_name,
                     deleted_move_id,
                     reversed_document_ids,
                 )
+            else:
+                try:
+                    move.unlink()
+                except Exception as move_unlink_error:
+                    if not self._is_sequence_chain_delete_error(move_unlink_error):
+                        raise
+                    _logger.warning(
+                        "Draft document %s (id=%s) could not be deleted due to sequence chain.",
+                        deleted_move_name,
+                        deleted_move_id,
+                    )
+                    was_reversed_instead_of_deleted = True
 
             _logger.info(
                 "Deleted %s %s (id=%s, uuid=%s) and related payments %s",
