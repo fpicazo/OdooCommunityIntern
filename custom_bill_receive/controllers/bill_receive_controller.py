@@ -1068,3 +1068,131 @@ class BillReceiveController(http.Controller):
                 'error': 'Failed to change bill account',
                 'details': str(e)
             }
+
+
+class PaymentPurgeController(http.Controller):
+
+    def _extract_payload_any(self):
+        payload = {}
+        try:
+            raw = request.httprequest.data
+            if raw:
+                payload = json.loads(raw.decode("utf-8"))
+                if isinstance(payload, dict) and "params" in payload and isinstance(payload["params"], dict):
+                    payload = payload["params"]
+        except Exception:
+            payload = {}
+        try:
+            for k, v in (request.params or {}).items():
+                payload.setdefault(k, v)
+        except Exception:
+            pass
+        return payload or {}
+
+    def _parse_limit(self, val, fallback=None):
+        val = fallback if val is None else val
+        if val in (None, "", False):
+            return None
+        try:
+            v = int(val)
+            return v if v > 0 else None
+        except Exception:
+            return None
+
+    @http.route('/api/purge_payments_sql', type='http', auth='public', methods=['POST'], csrf=False)
+    def purge_payments_sql(self, **kwargs):
+        """
+        DEV/TEST ONLY
+        Deletes payments purely via SQL to bypass ORM validations.
+        Optionally deletes linked journal entries (moves) + move lines + reconciliations.
+        """
+        try:
+            payload = self._extract_payload_any()
+            limit = self._parse_limit(payload.get("limit"), 100)
+            delete_moves = payload.get("delete_moves", True)
+            # allow specific ids: {"payment_ids":[1,2,3]}
+            payment_ids_in = payload.get("payment_ids")
+
+            cr = request.env.cr
+
+            # 1) pick payment ids WITHOUT ORM
+            if payment_ids_in and isinstance(payment_ids_in, list):
+                payment_ids = [int(x) for x in payment_ids_in if str(x).isdigit()]
+            else:
+                cr.execute("SELECT id FROM account_payment ORDER BY id DESC LIMIT %s", (limit,))
+                payment_ids = [r[0] for r in cr.fetchall()]
+
+            if not payment_ids:
+                res = {"success": "No payments found", "summary": {"picked": 0, "deleted_payments": 0}}
+                return request.make_response(json.dumps(res), headers=[("Content-Type", "application/json")])
+
+            # 2) fetch move_ids for those payments
+            cr.execute(
+                "SELECT id, move_id FROM account_payment WHERE id = ANY(%s)",
+                (payment_ids,)
+            )
+            rows = cr.fetchall()
+            move_ids = [m for (_pid, m) in rows if m]
+
+            deleted_reconcile = 0
+            deleted_move_lines = 0
+            deleted_moves = 0
+
+            if delete_moves and move_ids:
+                # If account_move has payment_id column, detach it to avoid any FK/triggers
+                try:
+                    cr.execute("UPDATE account_move SET payment_id = NULL WHERE payment_id = ANY(%s)", (payment_ids,))
+                except Exception:
+                    # column might not exist or no permission; ignore
+                    pass
+
+                # 3) collect move line ids
+                cr.execute("SELECT id FROM account_move_line WHERE move_id = ANY(%s)", (move_ids,))
+                line_ids = [r[0] for r in cr.fetchall()]
+
+                if line_ids:
+                    # 4) delete reconciliations that reference these lines
+                    cr.execute(
+                        "DELETE FROM account_partial_reconcile "
+                        "WHERE debit_move_id = ANY(%s) OR credit_move_id = ANY(%s)",
+                        (line_ids, line_ids)
+                    )
+                    deleted_reconcile += cr.rowcount
+
+                    # 5) delete move lines
+                    cr.execute("DELETE FROM account_move_line WHERE id = ANY(%s)", (line_ids,))
+                    deleted_move_lines += cr.rowcount
+
+                # 6) delete moves
+                cr.execute("DELETE FROM account_move WHERE id = ANY(%s)", (move_ids,))
+                deleted_moves += cr.rowcount
+
+            # 7) delete payments themselves
+            cr.execute("DELETE FROM account_payment WHERE id = ANY(%s)", (payment_ids,))
+            deleted_payments = cr.rowcount
+
+            cr.commit()
+
+            res = {
+                "success": "Payments purged by SQL",
+                "summary": {
+                    "picked": len(payment_ids),
+                    "delete_moves": bool(delete_moves),
+                    "deleted_payments": deleted_payments,
+                    "deleted_moves": deleted_moves,
+                    "deleted_move_lines": deleted_move_lines,
+                    "deleted_reconcile_rows": deleted_reconcile,
+                },
+            }
+            return request.make_response(json.dumps(res), headers=[("Content-Type", "application/json")])
+
+        except Exception as e:
+            try:
+                request.env.cr.rollback()
+            except Exception:
+                pass
+            _logger.error("purge_payments_sql failed: %s", str(e), exc_info=True)
+            return request.make_response(
+                json.dumps({"error": "purge_payments_sql failed", "details": str(e)}),
+                headers=[("Content-Type", "application/json")]
+            )
