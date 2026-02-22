@@ -6,6 +6,75 @@ import logging
 _logger = logging.getLogger(__name__)
 
 class BillReceiveController(http.Controller):
+    SPECIAL_DELETE_CATEGORY = 'santander no aplica - cambio'
+
+    def _extract_json_payload(self):
+        try:
+            raw = json.loads(request.httprequest.data.decode('utf-8'))
+            return raw.get('params', raw)
+        except Exception:
+            return {}
+
+    def _build_uuid_domain(self, account_move, uuid):
+        uuid_filters = []
+        if 'folio_fiscal' in account_move._fields:
+            uuid_filters.append(('folio_fiscal', '=', uuid))
+        if 'l10n_mx_edi_cfdi_uuid' in account_move._fields:
+            uuid_filters.append(('l10n_mx_edi_cfdi_uuid', '=', uuid))
+
+        if not uuid_filters:
+            return None
+        if len(uuid_filters) == 1:
+            return uuid_filters
+        return ['|', uuid_filters[0], uuid_filters[1]]
+
+    def _find_move_by_uuid(self, uuid, allowed_move_types, allowed_states=None):
+        account_move = request.env['account.move'].sudo()
+        domain = [('move_type', 'in', allowed_move_types)]
+        if allowed_states:
+            domain.append(('state', 'in', allowed_states))
+
+        uuid_domain = self._build_uuid_domain(account_move, uuid)
+        if uuid_domain is None:
+            return account_move, None
+
+        domain += uuid_domain
+        move = account_move.search(domain, limit=1)
+        return account_move, move
+
+    def _is_special_delete_category(self, move, category_value):
+        if category_value and category_value.strip().lower() == self.SPECIAL_DELETE_CATEGORY:
+            return True
+
+        ref_value = (move.ref or '').strip().lower()
+        return ref_value == self.SPECIAL_DELETE_CATEGORY
+
+    def _set_record_to_draft(self, record):
+        if hasattr(record, 'button_draft'):
+            record.button_draft()
+            return
+        if hasattr(record, 'action_draft'):
+            record.action_draft()
+            return
+        raise ValueError(f"Cannot set record {record._name}({record.id}) to draft.")
+
+    def _get_related_payments(self, move):
+        move_lines = move.line_ids
+        partials = (move_lines.matched_debit_ids | move_lines.matched_credit_ids)
+        counterpart_lines = (partials.debit_move_id | partials.credit_move_id) - move_lines
+
+        payment_moves = counterpart_lines.mapped('move_id').filtered(
+            lambda m: m.payment_id
+        )
+        return payment_moves.mapped('payment_id')
+
+    def _get_payment_related_documents(self, payment):
+        payment_lines = payment.move_id.line_ids
+        partials = (payment_lines.matched_debit_ids | payment_lines.matched_credit_ids)
+        counterpart_lines = (partials.debit_move_id | partials.credit_move_id) - payment_lines
+        return counterpart_lines.mapped('move_id').filtered(
+            lambda m: m.move_type in ('out_invoice', 'out_refund', 'in_invoice', 'in_refund')
+        )
 
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_bills(self, bills=None, **kwargs):
@@ -297,11 +366,7 @@ class BillReceiveController(http.Controller):
         try:
             payload = {}
             if not uuid or not payment_data:
-                try:
-                    raw = json.loads(request.httprequest.data.decode('utf-8'))
-                    payload = raw.get('params', raw)
-                except Exception:
-                    payload = {}
+                payload = self._extract_json_payload()
 
             uuid = uuid or payload.get('uuid') or payload.get('invoice_uuid')
             payment_data = payment_data or payload.get('payment_data', {})
@@ -313,27 +378,13 @@ class BillReceiveController(http.Controller):
             if not payment_data.get('journal_id'):
                 return {'error': 'Missing payment_data.journal_id'}
 
-            account_move = request.env['account.move'].sudo()
-            search_domain = [
-                ('move_type', 'in', ['out_invoice', 'out_refund']),
-                ('state', '=', 'posted'),
-            ]
-
-            uuid_filters = []
-            if 'folio_fiscal' in account_move._fields:
-                uuid_filters.append(('folio_fiscal', '=', uuid))
-            if 'l10n_mx_edi_cfdi_uuid' in account_move._fields:
-                uuid_filters.append(('l10n_mx_edi_cfdi_uuid', '=', uuid))
-
-            if not uuid_filters:
+            _, invoice = self._find_move_by_uuid(
+                uuid=uuid,
+                allowed_move_types=['out_invoice', 'out_refund'],
+                allowed_states=['posted'],
+            )
+            if invoice is None:
                 return {'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).'}
-
-            if len(uuid_filters) == 1:
-                search_domain.append(uuid_filters[0])
-            else:
-                search_domain += ['|', uuid_filters[0], uuid_filters[1]]
-
-            invoice = account_move.search(search_domain, limit=1)
             if not invoice:
                 return {'error': f"Invoice not found for UUID '{uuid}'"}
 
@@ -414,5 +465,166 @@ class BillReceiveController(http.Controller):
             _logger.error(f"Failed to register invoice payment: {str(e)}", exc_info=True)
             return {
                 'error': 'Failed to register payment',
+                'details': str(e)
+            }
+
+    @http.route('/api/delete_document_by_uuid', type='json', auth='public', methods=['POST'], csrf=False)
+    def delete_document_by_uuid(self, uuid=None, document_type=None, **kwargs):
+        try:
+            payload = {}
+            if not uuid or not document_type:
+                payload = self._extract_json_payload()
+
+            uuid = uuid or payload.get('uuid')
+            document_type = (document_type or payload.get('document_type') or payload.get('type') or '').strip().lower()
+
+            if not uuid:
+                return {'error': 'Missing uuid'}
+            if document_type not in ('invoice', 'bill'):
+                return {'error': "Invalid type. Expected 'invoice' or 'bill'."}
+
+            move_type_by_doc = {
+                'invoice': ['out_invoice', 'out_refund'],
+                'bill': ['in_invoice', 'in_refund'],
+            }
+
+            _, move = self._find_move_by_uuid(
+                uuid=uuid,
+                allowed_move_types=move_type_by_doc[document_type],
+                allowed_states=['draft', 'posted'],
+            )
+            if move is None:
+                return {'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).'}
+            if not move:
+                return {'error': f"No {document_type} found for UUID '{uuid}'"}
+
+            payments = self._get_related_payments(move)
+            deleted_payment_ids = []
+
+            for payment in payments:
+                related_docs = self._get_payment_related_documents(payment)
+                linked_other_docs = related_docs.filtered(lambda doc: doc.id != move.id)
+                if linked_other_docs:
+                    return {
+                        'error': (
+                            f"Payment {payment.id} is reconciled with other documents "
+                            f"({', '.join(linked_other_docs.mapped('name'))}). "
+                            "Unlink it manually before deleting this document."
+                        )
+                    }
+
+                if payment.move_id.line_ids:
+                    payment.move_id.line_ids.remove_move_reconcile()
+
+                if payment.state == 'posted':
+                    self._set_record_to_draft(payment)
+
+                deleted_payment_ids.append(payment.id)
+                payment.unlink()
+
+            if move.line_ids:
+                move.line_ids.remove_move_reconcile()
+
+            if move.state == 'posted':
+                self._set_record_to_draft(move)
+
+            deleted_move_id = move.id
+            deleted_move_name = move.name
+            move.unlink()
+
+            _logger.info(
+                "Deleted %s %s (id=%s, uuid=%s) and related payments %s",
+                document_type,
+                deleted_move_name,
+                deleted_move_id,
+                uuid,
+                deleted_payment_ids,
+            )
+
+            return {
+                'success': f"{document_type.capitalize()} and related payments deleted",
+                'uuid': uuid,
+                'deleted_document_id': deleted_move_id,
+                'deleted_payment_ids': deleted_payment_ids,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error("Failed to delete document by UUID: %s", str(e), exc_info=True)
+            return {
+                'error': 'Failed to delete document',
+                'details': str(e)
+            }
+
+    @http.route('/api/change_bill_account_by_uuid', type='json', auth='public', methods=['POST'], csrf=False)
+    def change_bill_account_by_uuid(self, uuid=None, account=None, category=None, **kwargs):
+        try:
+            payload = {}
+            if not uuid or not account:
+                payload = self._extract_json_payload()
+
+            uuid = uuid or payload.get('uuid')
+            account = account or payload.get('account') or payload.get('account_name')
+            category = category or payload.get('category')
+
+            if not uuid:
+                return {'error': 'Missing uuid'}
+            if not account:
+                return {'error': 'Missing account (or account_name)'}
+
+            _, bill = self._find_move_by_uuid(
+                uuid=uuid,
+                allowed_move_types=['in_invoice', 'in_refund'],
+                allowed_states=['draft', 'posted'],
+            )
+            if bill is None:
+                return {'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).'}
+            if not bill:
+                return {'error': f"Bill not found for UUID '{uuid}'"}
+
+            if self._is_special_delete_category(bill, category):
+                return self.delete_document_by_uuid(uuid=uuid, document_type='bill')
+
+            account_model = request.env['account.account'].sudo()
+            target_account = account_model.search([('name', '=', account)], limit=1)
+            if not target_account:
+                target_account = account_model.search([('name', 'ilike', account)], limit=1)
+            if not target_account:
+                return {'error': f"Account '{account}' not found"}
+            if target_account.account_type in ('asset_receivable', 'liability_payable'):
+                return {'error': f"Account '{target_account.name}' is receivable/payable and cannot be used in bill line items."}
+
+            was_posted = bill.state == 'posted'
+            if bill.line_ids:
+                bill.line_ids.remove_move_reconcile()
+            if was_posted:
+                self._set_record_to_draft(bill)
+
+            bill.invoice_line_ids.sudo().write({'account_id': target_account.id})
+
+            if was_posted:
+                bill.action_post()
+
+            _logger.info(
+                "Updated bill %s (id=%s, uuid=%s) line accounts to %s (%s)",
+                bill.name,
+                bill.id,
+                uuid,
+                target_account.name,
+                target_account.id,
+            )
+
+            return {
+                'success': 'Bill account updated',
+                'uuid': uuid,
+                'bill_id': bill.id,
+                'account_id': target_account.id,
+                'account_name': target_account.name,
+                'updated_line_ids': bill.invoice_line_ids.ids,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error("Failed to change bill account by UUID: %s", str(e), exc_info=True)
+            return {
+                'error': 'Failed to change bill account',
                 'details': str(e)
             }
