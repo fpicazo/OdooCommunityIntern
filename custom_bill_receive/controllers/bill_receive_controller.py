@@ -2,11 +2,35 @@ from odoo import http, fields
 from odoo.http import request
 import json
 import logging
+import unicodedata
 
 _logger = logging.getLogger(__name__)
 
 class BillReceiveController(http.Controller):
     SPECIAL_DELETE_CATEGORY = 'santander no aplica - cambio'
+    CATEGORY_TO_ACCOUNT_CODE = {
+        'viaticos': '601.90.01',
+        'restaurantes': '601.90.01',
+        'honorarios': '601.88.01',
+        'regalias': '601.74.01',
+        'asistencia tecnica': '601.97.01',
+        'seguros y fianzas': '601.98.01',
+        'cuotas al imss': '601.26.01',
+        'impuestos locales': '601.58.01',
+        'adquisicion de mercancias': '501.01.01',
+        'combustibles y lubricantes': '602.03.01',
+        'uso o goce temporal de bienes': '602.09.01',
+        'publicidad y propaganda': '601.89.01',
+        'otros gastos': '601.84.01',
+    }
+
+    def _normalize_text(self, value):
+        text = (value or '').strip().lower()
+        text = ''.join(
+            ch for ch in unicodedata.normalize('NFKD', text)
+            if not unicodedata.combining(ch)
+        )
+        return ' '.join(text.split())
 
     def _extract_json_payload(self):
         try:
@@ -619,7 +643,7 @@ class BillReceiveController(http.Controller):
     def change_bill_account_by_uuid(self, uuid=None, account=None, category=None, **kwargs):
         try:
             payload = {}
-            if not uuid or not account:
+            if not uuid or (not account and not category):
                 payload = self._extract_json_payload()
 
             uuid = uuid or payload.get('uuid')
@@ -628,8 +652,8 @@ class BillReceiveController(http.Controller):
 
             if not uuid:
                 return {'error': 'Missing uuid'}
-            if not account:
-                return {'error': 'Missing account (or account_name)'}
+            if not category and not account:
+                return {'error': 'Missing category (Nombre de la cuenta) or account (account_name)'}
 
             _, bill = self._find_move_by_uuid(
                 uuid=uuid,
@@ -645,10 +669,28 @@ class BillReceiveController(http.Controller):
                 return self.delete_document_by_uuid(uuid=uuid, document_type='bill')
 
             account_model = request.env['account.account'].sudo()
-            target_account = account_model.search([('name', '=', account)], limit=1)
+            matched_account_code = False
+            if category:
+                normalized_category = self._normalize_text(category)
+                matched_account_code = self.CATEGORY_TO_ACCOUNT_CODE.get(normalized_category)
+                if not matched_account_code:
+                    return {
+                        'error': (
+                            f"Category '{category}' is not in the allowed catalog (Nombre de la cuenta)."
+                        )
+                    }
+
+            target_account = account_model.browse()
+            if matched_account_code:
+                target_account = account_model.search([('code', '=', matched_account_code)], limit=1)
+
+            if not target_account and account:
+                target_account = account_model.search([('name', '=', account)], limit=1)
+                if not target_account:
+                    target_account = account_model.search([('name', 'ilike', account)], limit=1)
             if not target_account:
-                target_account = account_model.search([('name', 'ilike', account)], limit=1)
-            if not target_account:
+                if matched_account_code:
+                    return {'error': f"Account with code '{matched_account_code}' not found"}
                 return {'error': f"Account '{account}' not found"}
             if target_account.account_type in ('asset_receivable', 'liability_payable'):
                 return {'error': f"Account '{target_account.name}' is receivable/payable and cannot be used in bill line items."}
@@ -679,6 +721,8 @@ class BillReceiveController(http.Controller):
                 'bill_id': bill.id,
                 'account_id': target_account.id,
                 'account_name': target_account.name,
+                'account_code': target_account.code,
+                'matched_category': category,
                 'updated_line_ids': bill.invoice_line_ids.ids,
             }
         except Exception as e:
