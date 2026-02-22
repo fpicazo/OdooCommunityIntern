@@ -36,12 +36,19 @@ class BillReceiveController(http.Controller):
         raw = (vat or '').strip().upper().replace(' ', '').replace('-', '')
         if not raw:
             return raw
-        if len(raw) >= 2 and raw[:2].isalpha():
+        # Keep explicit country-prefixed VATs untouched.
+        if raw.startswith('MX') and len(raw) > 2:
             return raw
-        # Mexican RFC without country prefix -> expected by Odoo as MX + RFC
+        # Mexican RFC without country prefix -> expected by Odoo as MX + RFC.
         if raw.isalnum() and len(raw) in (12, 13):
             return f"MX{raw}"
+        if len(raw) >= 2 and raw[:2].isalpha():
+            return raw
         return raw
+
+    def _get_mx_country_id(self):
+        country = request.env['res.country'].sudo().search([('code', '=', 'MX')], limit=1)
+        return country.id if country else False
 
     def _extract_json_payload(self):
         try:
@@ -49,6 +56,15 @@ class BillReceiveController(http.Controller):
             return raw.get('params', raw)
         except Exception:
             return {}
+
+    def _extract_uuid_value(self, data):
+        value = (
+            (data or {}).get('l10n_mx_edi_cfdi_uuid')
+            or (data or {}).get('uuid')
+            or (data or {}).get('folio_fiscal')
+            or ''
+        )
+        return str(value).strip().upper()
 
     def _build_uuid_domain(self, account_move, uuid):
         uuid_filters = []
@@ -165,25 +181,68 @@ class BillReceiveController(http.Controller):
 
             created_bills = []
             errors = []
+            seen_uuids = set()
             for bill_data in bills:
                 try:
                     with request.env.cr.savepoint():
+                        cfdi_uuid = self._extract_uuid_value(bill_data)
+                        if cfdi_uuid:
+                            if cfdi_uuid in seen_uuids:
+                                errors.append({
+                                    'bill_data': bill_data,
+                                    'error': f"Duplicate UUID in request payload: '{cfdi_uuid}'",
+                                })
+                                continue
+
+                            requested_move_type = bill_data.get('move_type')
+                            allowed_move_types = [requested_move_type] if requested_move_type else ['in_invoice', 'in_refund']
+                            _, existing_move = self._find_move_by_uuid(
+                                uuid=cfdi_uuid,
+                                allowed_move_types=allowed_move_types,
+                            )
+                            if existing_move is None:
+                                errors.append({
+                                    'bill_data': bill_data,
+                                    'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).',
+                                })
+                                continue
+                            if existing_move:
+                                errors.append({
+                                    'bill_data': bill_data,
+                                    'error': f"Duplicate UUID already exists on move id={existing_move.id}: '{cfdi_uuid}'",
+                                })
+                                continue
+                            seen_uuids.add(cfdi_uuid)
+
                         raw_vat = (bill_data.get('partner_id') or {}).get('vat', '')
                         normalized_vat = self._normalize_vat(raw_vat)
                         partner_name = (bill_data.get('partner_id') or {}).get('name')
+                        mx_country_id = self._get_mx_country_id()
+                        partner_model = request.env['res.partner'].sudo().with_context(no_vat_validation=True)
 
-                        partner = request.env['res.partner'].sudo().search([
+                        partner = partner_model.search([
                             ('name', '=', partner_name),
                             ('vat', 'in', [normalized_vat, raw_vat]),
                         ], limit=1)
+                        if not partner and partner_name:
+                            partner = partner_model.search([('name', '=', partner_name)], limit=1)
                         if not partner:
-                            partner = request.env['res.partner'].sudo().create({
+                            partner_vals = {
                                 'name': partner_name,
                                 'vat': normalized_vat,
                                 'supplier_rank': 1,
-                            })
-                        elif normalized_vat and partner.vat != normalized_vat:
-                            partner.sudo().write({'vat': normalized_vat})
+                            }
+                            if mx_country_id:
+                                partner_vals['country_id'] = mx_country_id
+                            partner = partner_model.create(partner_vals)
+                        else:
+                            update_vals = {}
+                            if normalized_vat and partner.vat != normalized_vat:
+                                update_vals['vat'] = normalized_vat
+                            if mx_country_id and not partner.country_id:
+                                update_vals['country_id'] = mx_country_id
+                            if update_vals:
+                                partner_model.browse(partner.id).write(update_vals)
 
                         currency = None
                         if 'currency_code' in bill_data:
@@ -249,7 +308,7 @@ class BillReceiveController(http.Controller):
                             'invoice_date_due': bill_data.get('invoice_date_due', bill_data['invoice_date']),
                             'partner_id': partner.id,
                             'invoice_line_ids': invoice_line_ids,
-                            'l10n_mx_edi_cfdi_uuid': bill_data.get('l10n_mx_edi_cfdi_uuid', ''),
+                            'l10n_mx_edi_cfdi_uuid': cfdi_uuid,
                             'currency_id': currency.id
                         }
 
@@ -270,7 +329,6 @@ class BillReceiveController(http.Controller):
                             _logger.info(f"Registered payment {payment.id} for bill {bill.id}")
 
                         created_bills.append(bill.id)
-                        cfdi_uuid = bill_data.get('l10n_mx_edi_cfdi_uuid', '')
                         if cfdi_uuid:
                             bill.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
                         _logger.info(f"Created bill {bill.id} for {partner_name}")
@@ -310,24 +368,68 @@ class BillReceiveController(http.Controller):
 
             created_invoices = []
             errors = []
+            seen_uuids = set()
             for invoice_data in invoices:
                 try:
                     with request.env.cr.savepoint():
+                        cfdi_uuid = self._extract_uuid_value(invoice_data)
+                        if cfdi_uuid:
+                            if cfdi_uuid in seen_uuids:
+                                errors.append({
+                                    'invoice_data': invoice_data,
+                                    'error': f"Duplicate UUID in request payload: '{cfdi_uuid}'",
+                                })
+                                continue
+
+                            requested_move_type = invoice_data.get('move_type')
+                            allowed_move_types = [requested_move_type] if requested_move_type else ['out_invoice', 'out_refund']
+                            _, existing_move = self._find_move_by_uuid(
+                                uuid=cfdi_uuid,
+                                allowed_move_types=allowed_move_types,
+                            )
+                            if existing_move is None:
+                                errors.append({
+                                    'invoice_data': invoice_data,
+                                    'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).',
+                                })
+                                continue
+                            if existing_move:
+                                errors.append({
+                                    'invoice_data': invoice_data,
+                                    'error': f"Duplicate UUID already exists on move id={existing_move.id}: '{cfdi_uuid}'",
+                                })
+                                continue
+                            seen_uuids.add(cfdi_uuid)
+
                         raw_vat = (invoice_data.get('partner_id') or {}).get('vat', '')
                         normalized_vat = self._normalize_vat(raw_vat)
                         partner_name = (invoice_data.get('partner_id') or {}).get('name')
-                        partner = request.env['res.partner'].sudo().search([
+                        mx_country_id = self._get_mx_country_id()
+                        partner_model = request.env['res.partner'].sudo().with_context(no_vat_validation=True)
+
+                        partner = partner_model.search([
                             ('name', '=', partner_name),
                             ('vat', 'in', [normalized_vat, raw_vat]),
                         ], limit=1)
+                        if not partner and partner_name:
+                            partner = partner_model.search([('name', '=', partner_name)], limit=1)
                         if not partner:
-                            partner = request.env['res.partner'].sudo().create({
+                            partner_vals = {
                                 'name': partner_name,
                                 'vat': normalized_vat,
                                 'customer_rank': 1,
-                            })
-                        elif normalized_vat and partner.vat != normalized_vat:
-                            partner.sudo().write({'vat': normalized_vat})
+                            }
+                            if mx_country_id:
+                                partner_vals['country_id'] = mx_country_id
+                            partner = partner_model.create(partner_vals)
+                        else:
+                            update_vals = {}
+                            if normalized_vat and partner.vat != normalized_vat:
+                                update_vals['vat'] = normalized_vat
+                            if mx_country_id and not partner.country_id:
+                                update_vals['country_id'] = mx_country_id
+                            if update_vals:
+                                partner_model.browse(partner.id).write(update_vals)
 
                         currency = request.env['res.currency'].sudo().search([
                             ('name', '=', invoice_data['currency_code'])
@@ -403,7 +505,7 @@ class BillReceiveController(http.Controller):
                             'move_type': invoice_data['move_type'],
                             'journal_id': invoice_data['journal_id'],
                             'ref': invoice_data.get('name', ''),
-                            'l10n_mx_edi_cfdi_uuid': invoice_data.get('l10n_mx_edi_cfdi_uuid', ''),
+                            'l10n_mx_edi_cfdi_uuid': cfdi_uuid,
                             'invoice_date': invoice_data['invoice_date'],
                             'invoice_date_due': invoice_data.get('invoice_date_due', invoice_data['invoice_date']),
                             'partner_id': partner.id,
@@ -421,7 +523,6 @@ class BillReceiveController(http.Controller):
                         invoice.action_post()
                         created_invoices.append(invoice.id)
 
-                        cfdi_uuid = invoice_data.get('l10n_mx_edi_cfdi_uuid', '')
                         if cfdi_uuid:
                             invoice.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
 
