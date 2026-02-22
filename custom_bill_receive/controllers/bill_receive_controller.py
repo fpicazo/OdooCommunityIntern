@@ -821,12 +821,6 @@ class BillReceiveController(http.Controller):
 
                     if payment_force.move_id and payment_force.move_id.line_ids:
                         payment_force.move_id.line_ids.remove_move_reconcile()
-                    if payment_force.state == 'posted':
-                        try:
-                            self._set_record_to_draft(payment_force)
-                        except Exception:
-                            # Some versions block draft reset; force-delete context handles posted records.
-                            pass
                     payment_force.unlink()
                     deleted_payments += 1
                 except Exception as payment_error:
@@ -867,12 +861,6 @@ class BillReceiveController(http.Controller):
 
                     if bill_force.line_ids:
                         bill_force.line_ids.remove_move_reconcile()
-                    if bill_force.state == 'posted':
-                        try:
-                            self._set_record_to_draft(bill_force)
-                        except Exception:
-                            # Some journals/lock dates prevent draft reset.
-                            pass
                     bill_force.unlink()
                     deleted_bills += 1
                 except Exception as bill_error:
