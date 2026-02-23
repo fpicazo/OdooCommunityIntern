@@ -952,8 +952,8 @@ class BillReceiveController(http.Controller):
                 return {'error': f"No {document_type} found for UUID '{uuid}'"}
 
             payments = self._get_related_payments(move)
-            deleted_payment_ids = []
 
+            # --- Pre-validate ALL payments before touching anything ---
             for payment in payments:
                 related_docs = self._get_payment_related_documents(payment)
                 linked_other_docs = related_docs.filtered(lambda doc: doc.id != move.id)
@@ -966,47 +966,59 @@ class BillReceiveController(http.Controller):
                         )
                     }
 
-                if payment.move_id.line_ids:
-                    payment.move_id.line_ids.remove_move_reconcile()
+            deleted_payment_ids = []
 
-                payment_id = payment.id
-                if payment.state == 'posted':
-                    self._set_record_to_draft(payment)
+            # Wrap everything in a savepoint so any mid-way error rolls back cleanly
+            with request.env.cr.savepoint():
+                # 1) Remove all reconciliations on the document first so payments
+                #    can be set to draft without Odoo blocking on linked entries.
+                if move.line_ids:
+                    move.line_ids.remove_move_reconcile()
+
+                for payment in payments:
+                    # Also remove reconciliations on the payment move's lines
+                    if payment.move_id and payment.move_id.line_ids:
+                        payment.move_id.line_ids.remove_move_reconcile()
+
+                    payment_id = payment.id
+                    # Refresh state from DB to avoid stale ORM cache
+                    payment.invalidate_recordset()
+                    if payment.state == 'posted':
+                        self._set_record_to_draft(payment)
+
+                    try:
+                        payment.unlink()
+                        deleted_payment_ids.append(payment_id)
+                    except Exception as payment_unlink_error:
+                        if not self._is_sequence_chain_delete_error(payment_unlink_error):
+                            raise
+                        return {
+                            'error': (
+                                f"Payment {payment_id} cannot be deleted due to sequence chain rules. "
+                                "It was set to draft, but Odoo still blocks deletion."
+                            ),
+                            'details': str(payment_unlink_error),
+                        }
+
+                deleted_move_id = move.id
+                deleted_move_name = move.name
+                # Refresh state from DB to avoid stale ORM cache after payment ops
+                move.invalidate_recordset()
+                if move.state == 'posted':
+                    self._set_record_to_draft(move)
 
                 try:
-                    payment.unlink()
-                    deleted_payment_ids.append(payment_id)
-                except Exception as payment_unlink_error:
-                    if not self._is_sequence_chain_delete_error(payment_unlink_error):
+                    move.unlink()
+                except Exception as move_unlink_error:
+                    if not self._is_sequence_chain_delete_error(move_unlink_error):
                         raise
                     return {
                         'error': (
-                            f"Payment {payment_id} cannot be deleted due to sequence chain rules. "
+                            f"{document_type.capitalize()} cannot be deleted due to sequence chain rules. "
                             "It was set to draft, but Odoo still blocks deletion."
                         ),
-                        'details': str(payment_unlink_error),
+                        'details': str(move_unlink_error),
                     }
-
-            if move.line_ids:
-                move.line_ids.remove_move_reconcile()
-
-            deleted_move_id = move.id
-            deleted_move_name = move.name
-            if move.state == 'posted':
-                self._set_record_to_draft(move)
-
-            try:
-                move.unlink()
-            except Exception as move_unlink_error:
-                if not self._is_sequence_chain_delete_error(move_unlink_error):
-                    raise
-                return {
-                    'error': (
-                        f"{document_type.capitalize()} cannot be deleted due to sequence chain rules. "
-                        "It was set to draft, but Odoo still blocks deletion."
-                    ),
-                    'details': str(move_unlink_error),
-                }
 
             _logger.info(
                 "Deleted %s %s (id=%s, uuid=%s) and related payments %s",
