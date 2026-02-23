@@ -967,9 +967,21 @@ class BillReceiveController(http.Controller):
                     }
 
             deleted_payment_ids = []
+            cr = request.env.cr
+
+            def _sql_force_delete_move(move_id):
+                """Hard-delete a journal entry and its lines via SQL, bypassing ORM chain checks."""
+                cr.execute(
+                    "DELETE FROM account_partial_reconcile "
+                    "WHERE debit_move_id IN (SELECT id FROM account_move_line WHERE move_id = %s) "
+                    "   OR credit_move_id IN (SELECT id FROM account_move_line WHERE move_id = %s)",
+                    (move_id, move_id),
+                )
+                cr.execute("DELETE FROM account_move_line WHERE move_id = %s", (move_id,))
+                cr.execute("DELETE FROM account_move WHERE id = %s", (move_id,))
 
             # Wrap everything in a savepoint so any mid-way error rolls back cleanly
-            with request.env.cr.savepoint():
+            with cr.savepoint():
                 # 1) Remove all reconciliations on the document first so payments
                 #    can be set to draft without Odoo blocking on linked entries.
                 if move.line_ids:
@@ -981,6 +993,8 @@ class BillReceiveController(http.Controller):
                         payment.move_id.line_ids.remove_move_reconcile()
 
                     payment_id = payment.id
+                    payment_move_id = payment.move_id.id if payment.move_id else None
+
                     # Refresh state from DB to avoid stale ORM cache
                     payment.invalidate_recordset()
                     if payment.state == 'posted':
@@ -992,13 +1006,15 @@ class BillReceiveController(http.Controller):
                     except Exception as payment_unlink_error:
                         if not self._is_sequence_chain_delete_error(payment_unlink_error):
                             raise
-                        return {
-                            'error': (
-                                f"Payment {payment_id} cannot be deleted due to sequence chain rules. "
-                                "It was set to draft, but Odoo still blocks deletion."
-                            ),
-                            'details': str(payment_unlink_error),
-                        }
+                        # ORM unlink blocked by sequence chain — force-delete via SQL
+                        _logger.warning(
+                            "Payment %s blocked by sequence chain; using SQL force-delete.",
+                            payment_id,
+                        )
+                        cr.execute("DELETE FROM account_payment WHERE id = %s", (payment_id,))
+                        if payment_move_id:
+                            _sql_force_delete_move(payment_move_id)
+                        deleted_payment_ids.append(payment_id)
 
                 deleted_move_id = move.id
                 deleted_move_name = move.name
@@ -1012,13 +1028,12 @@ class BillReceiveController(http.Controller):
                 except Exception as move_unlink_error:
                     if not self._is_sequence_chain_delete_error(move_unlink_error):
                         raise
-                    return {
-                        'error': (
-                            f"{document_type.capitalize()} cannot be deleted due to sequence chain rules. "
-                            "It was set to draft, but Odoo still blocks deletion."
-                        ),
-                        'details': str(move_unlink_error),
-                    }
+                    # ORM unlink blocked by sequence chain — force-delete via SQL
+                    _logger.warning(
+                        "%s %s (id=%s) blocked by sequence chain; using SQL force-delete.",
+                        document_type, deleted_move_name, deleted_move_id,
+                    )
+                    _sql_force_delete_move(deleted_move_id)
 
             _logger.info(
                 "Deleted %s %s (id=%s, uuid=%s) and related payments %s",
