@@ -664,6 +664,263 @@ class BillReceiveController(http.Controller):
                 'details': str(e)
             }
 
+    @http.route('/api/register_bill_payment', type='json', auth='public', methods=['POST'], csrf=False)
+    def register_bill_payment(self, uuid=None, payment_data=None, **kwargs):
+        """
+        Register a vendor bill payment.
+        Payload:
+          {
+            "uuid": "<cfdi_uuid>",
+            "payment_data": {
+              "journal_id": <int>,
+              "amount": <float>,           # optional, defaults to bill's amount_residual
+              "payment_date": "YYYY-MM-DD", # optional, defaults to the bill's invoice_date
+              "currency_code": "MXN"        # optional, defaults to bill's currency
+            }
+          }
+        """
+        try:
+            payload = {}
+            if not uuid or not payment_data:
+                payload = self._extract_json_payload()
+
+            uuid = uuid or payload.get('uuid') or payload.get('bill_uuid')
+            payment_data = payment_data or payload.get('payment_data', {})
+
+            if not uuid:
+                return {'error': 'Missing uuid (or bill_uuid)'}
+            if not payment_data:
+                return {'error': 'Missing payment_data'}
+            if not payment_data.get('journal_id'):
+                return {'error': 'Missing payment_data.journal_id'}
+
+            _, bill = self._find_move_by_uuid(
+                uuid=uuid,
+                allowed_move_types=['in_invoice', 'in_refund'],
+                allowed_states=['posted'],
+            )
+            if bill is None:
+                return {'error': 'No UUID field available on account.move (expected folio_fiscal or l10n_mx_edi_cfdi_uuid).'}
+            if not bill:
+                return {'error': f"Bill not found for UUID '{uuid}'"}
+
+            pay_journal = request.env['account.journal'].sudo().browse(payment_data['journal_id']).exists()
+            if not pay_journal:
+                return {'error': f"Journal not found (id={payment_data['journal_id']})"}
+
+            pay_method_line = pay_journal.outbound_payment_method_line_ids[:1]
+            if not pay_method_line:
+                return {'error': f"No outbound payment method configured on journal '{pay_journal.name}' (id={pay_journal.id})."}
+
+            currency = bill.currency_id
+            currency_code = payment_data.get('currency_code')
+            if currency_code:
+                found_currency = request.env['res.currency'].sudo().search([('name', '=', currency_code)], limit=1)
+                if not found_currency:
+                    return {'error': f"Currency '{currency_code}' not found."}
+                currency = found_currency
+
+            inv_payable_line = bill.line_ids.filtered(
+                lambda l: l.account_id.account_type == 'liability_payable'
+            )[:1]
+            if not inv_payable_line:
+                return {'error': f"Bill {bill.id} has no payable line to pay."}
+
+            payable_account = inv_payable_line.account_id
+
+            amount = payment_data.get('amount', bill.amount_residual)
+            # Default to bill's own invoice_date so payment date matches the bill
+            payment_date = payment_data.get('payment_date') or (
+                str(bill.invoice_date) if bill.invoice_date else fields.Date.context_today(request.env.user)
+            )
+
+            payment = request.env['account.payment'].sudo().create({
+                'payment_type': 'outbound',
+                'partner_type': 'supplier',
+                'partner_id': bill.partner_id.id,
+                'amount': amount,
+                'date': payment_date,
+                'journal_id': pay_journal.id,
+                'currency_id': currency.id,
+                'payment_method_line_id': pay_method_line.id,
+                'destination_account_id': payable_account.id,
+            })
+            payment.action_post()
+
+            bill_lines = bill.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+            )
+            if not bill_lines:
+                bill_lines = bill.line_ids.filtered(
+                    lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
+                )
+
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+            )
+            if not payment_lines:
+                payment_lines = payment.move_id.line_ids.filtered(
+                    lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
+                )
+
+            lines_to_reconcile = bill_lines + payment_lines
+            if lines_to_reconcile:
+                lines_to_reconcile.reconcile()
+            else:
+                _logger.warning(
+                    "No unreconciled payable lines found for bill %s / payment %s",
+                    bill.id, payment.id
+                )
+
+            _logger.info("Registered payment %s and reconciled bill %s using UUID %s", payment.id, bill.id, uuid)
+            return {
+                'success': 'Payment registered and applied',
+                'bill_id': bill.id,
+                'payment_id': payment.id,
+                'payment_date': str(payment_date),
+                'uuid': uuid,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error(f"Failed to register bill payment: {str(e)}", exc_info=True)
+            return {
+                'error': 'Failed to register bill payment',
+                'details': str(e)
+            }
+
+    @http.route('/api/register_unpaid_bills_payments', type='json', auth='public', methods=['POST'], csrf=False)
+    def register_unpaid_bills_payments(self, **kwargs):
+        """
+        Bulk-register payments for all posted vendor bills that have no payment
+        linked yet (amount_residual == amount_total, i.e. fully unpaid).
+        Payment date defaults to each bill's own invoice_date.
+
+        Payload (all optional):
+          {
+            "journal_id": <int>,          # required: bank/cash journal to pay from
+            "currency_code": "MXN",       # optional, defaults to each bill's currency
+            "limit": 200                  # optional safety cap (default 200)
+          }
+        """
+        try:
+            payload = self._extract_json_payload()
+
+            journal_id = payload.get('journal_id')
+            if not journal_id:
+                return {'error': 'Missing journal_id'}
+
+            currency_code = payload.get('currency_code')
+            limit = self._parse_limit(payload.get('limit'), 200) or 200
+
+            pay_journal = request.env['account.journal'].sudo().browse(int(journal_id)).exists()
+            if not pay_journal:
+                return {'error': f"Journal not found (id={journal_id})"}
+
+            pay_method_line = pay_journal.outbound_payment_method_line_ids[:1]
+            if not pay_method_line:
+                return {'error': f"No outbound payment method configured on journal '{pay_journal.name}'."}
+
+            override_currency = False
+            if currency_code:
+                override_currency = request.env['res.currency'].sudo().search([('name', '=', currency_code)], limit=1)
+                if not override_currency:
+                    return {'error': f"Currency '{currency_code}' not found."}
+
+            # Find posted bills that are fully unpaid (amount_residual > 0 and equals amount_total)
+            unpaid_bills = request.env['account.move'].sudo().search([
+                ('move_type', 'in', ['in_invoice', 'in_refund']),
+                ('state', '=', 'posted'),
+                ('payment_state', 'in', ['not_paid', 'partial']),
+            ], limit=limit, order='invoice_date asc, id asc')
+
+            results = []
+            errors = []
+
+            for bill in unpaid_bills:
+                try:
+                    with request.env.cr.savepoint():
+                        currency = override_currency or bill.currency_id
+
+                        payable_line = bill.line_ids.filtered(
+                            lambda l: l.account_id.account_type == 'liability_payable'
+                        )[:1]
+                        if not payable_line:
+                            errors.append({'bill_id': bill.id, 'ref': bill.ref, 'error': 'No payable line found'})
+                            continue
+
+                        amount = bill.amount_residual
+                        if amount <= 0:
+                            errors.append({'bill_id': bill.id, 'ref': bill.ref, 'error': 'No residual amount to pay'})
+                            continue
+
+                        payment_date = str(bill.invoice_date) if bill.invoice_date else fields.Date.context_today(request.env.user)
+
+                        payment = request.env['account.payment'].sudo().create({
+                            'payment_type': 'outbound',
+                            'partner_type': 'supplier',
+                            'partner_id': bill.partner_id.id,
+                            'amount': amount,
+                            'date': payment_date,
+                            'journal_id': pay_journal.id,
+                            'currency_id': currency.id,
+                            'payment_method_line_id': pay_method_line.id,
+                            'destination_account_id': payable_line.account_id.id,
+                        })
+                        payment.action_post()
+
+                        bill_lines = bill.line_ids.filtered(
+                            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+                        )
+                        if not bill_lines:
+                            bill_lines = bill.line_ids.filtered(
+                                lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
+                            )
+
+                        payment_lines = payment.move_id.line_ids.filtered(
+                            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+                        )
+                        if not payment_lines:
+                            payment_lines = payment.move_id.line_ids.filtered(
+                                lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
+                            )
+
+                        lines_to_reconcile = bill_lines + payment_lines
+                        if lines_to_reconcile:
+                            lines_to_reconcile.reconcile()
+                        else:
+                            _logger.warning("No reconcilable lines for bill %s / payment %s", bill.id, payment.id)
+
+                        _logger.info("Bulk payment %s registered for bill %s (%s)", payment.id, bill.id, bill.ref)
+                        results.append({
+                            'bill_id': bill.id,
+                            'ref': bill.ref,
+                            'payment_id': payment.id,
+                            'amount': amount,
+                            'payment_date': payment_date,
+                        })
+                except Exception as e:
+                    _logger.error("Failed to pay bill %s: %s", bill.id, str(e), exc_info=True)
+                    errors.append({'bill_id': bill.id, 'ref': bill.ref, 'error': str(e)})
+                    continue
+
+            return {
+                'success': 'Bulk bill payment completed',
+                'summary': {
+                    'total_processed': len(results) + len(errors),
+                    'paid': len(results),
+                    'failed': len(errors),
+                },
+                'paid': results,
+                'errors': errors,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error(f"register_unpaid_bills_payments failed: {str(e)}", exc_info=True)
+            return {
+                'error': 'register_unpaid_bills_payments failed',
+                'details': str(e)
+            }
+
     @http.route('/api/delete_document_by_uuid', type='json', auth='public', methods=['POST'], csrf=False)
     def delete_document_by_uuid(self, uuid=None, document_type=None, **kwargs):
         try:
