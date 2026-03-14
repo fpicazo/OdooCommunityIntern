@@ -197,16 +197,17 @@ class BillReceiveController(http.Controller):
             payment_lines = payment.move_id.line_ids.filtered(
                 lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
             )
-        if not payment_lines:
-            raise ValueError(
-                f"Payment {payment.id} has no outstanding {account_internal_group} line to assign."
-            )
-
-        if hasattr(move, 'js_assign_outstanding_line'):
-            move.js_assign_outstanding_line(payment_lines[:1].id)
-            move.invalidate_recordset()
-            payment.invalidate_recordset()
-            return
+        if payment_lines and hasattr(move, 'js_assign_outstanding_line'):
+            try:
+                move.js_assign_outstanding_line(payment_lines[:1].id)
+                move.invalidate_recordset()
+                payment.invalidate_recordset()
+                return
+            except Exception as assign_err:
+                _logger.info(
+                    "Native outstanding-line assignment failed for move %s / payment %s: %s. Falling back to direct reconcile.",
+                    move.id, payment.id, assign_err,
+                )
 
         move_lines = move.line_ids.filtered(
             lambda l: not l.reconciled and l.account_id.internal_group == account_internal_group
@@ -214,6 +215,11 @@ class BillReceiveController(http.Controller):
         if not move_lines:
             move_lines = move.line_ids.filtered(
                 lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
+            )
+
+        if not payment_lines:
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.id in move_lines.mapped('account_id').ids
             )
 
         lines_to_reconcile = move_lines + payment_lines
