@@ -119,6 +119,47 @@ class BillReceiveController(http.Controller):
         )
         return True
 
+    def _update_invoice_exchange_rate(self, move, exchange_rate, rate_date=None):
+        exchange_rate = self._parse_exchange_rate_value(exchange_rate)
+        if not exchange_rate or not move or not move.currency_id:
+            return False
+
+        company_currency = request.env.company.currency_id
+        if not company_currency or move.currency_id == company_currency:
+            return False
+
+        # Odoo invoice widgets usually display the inverse rate:
+        # 1 company_currency = X invoice_currency.
+        invoice_rate = 1.0 / exchange_rate
+
+        if 'invoice_currency_rate' in move._fields:
+            try:
+                move.sudo().with_context(check_move_validity=False).write({
+                    'invoice_currency_rate': invoice_rate,
+                })
+                move.invalidate_recordset()
+                _logger.info(
+                    "Updated invoice %s exchange rate to %s using invoice_currency_rate",
+                    move.id, invoice_rate,
+                )
+                return True
+            except Exception as write_err:
+                _logger.info(
+                    "Could not write invoice_currency_rate on move %s: %s. Falling back to currency rate table.",
+                    move.id, write_err,
+                )
+
+        self._apply_exchange_rate(
+            currency=move.currency_id,
+            payload={
+                'exchange_rate': exchange_rate,
+                'rate_date': rate_date or move.invoice_date or fields.Date.context_today(request.env.user),
+            },
+            default_date=rate_date or move.invoice_date,
+        )
+        move.invalidate_recordset()
+        return True
+
     def _extract_uuid_value(self, data):
         value = (
             (data or {}).get('l10n_mx_edi_cfdi_uuid')
@@ -827,8 +868,12 @@ class BillReceiveController(http.Controller):
             payment_date = payment_data.get('payment_date', fields.Date.context_today(request.env.user))
             exchange_rate = self._parse_exchange_rate_value(payment_data.get('exchange_rate'))
 
-            if exchange_rate and 'payment_exchange_rate' in invoice._fields:
-                invoice.sudo().write({'payment_exchange_rate': exchange_rate})
+            if exchange_rate:
+                self._update_invoice_exchange_rate(
+                    move=invoice,
+                    exchange_rate=exchange_rate,
+                    rate_date=payment_data.get('invoice_date') or invoice.invoice_date,
+                )
 
             payment = request.env['account.payment'].sudo().create({
                 'payment_type': 'inbound',
