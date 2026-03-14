@@ -1305,6 +1305,110 @@ class BillReceiveController(http.Controller):
         msg = str(err or "").lower()
         return "cursor already closed" in msg or "connection already closed" in msg
 
+    def _get_journal_liquidity_account(self, journal):
+        account = False
+        for field_name in ('default_account_id', 'payment_credit_account_id', 'payment_debit_account_id'):
+            if field_name in journal._fields:
+                account = getattr(journal, field_name)
+                if account:
+                    return account
+        return account
+
+    @http.route('/api/register_payroll_payment', type='json', auth='public', methods=['POST'], csrf=False)
+    def register_payroll_payment(self, journal_id=None, amount=None, payment_date=None, reference=None, partner_id=None, partner_name=None, **kwargs):
+        try:
+            payload = self._extract_json_payload()
+
+            journal_id = journal_id or payload.get('journal_id')
+            amount = amount if amount is not None else payload.get('amount')
+            payment_date = payment_date or payload.get('payment_date') or fields.Date.context_today(request.env.user)
+            reference = reference or payload.get('reference') or payload.get('ref') or 'Pago de nomina'
+            partner_id = partner_id or payload.get('partner_id')
+            partner_name = partner_name or payload.get('partner_name')
+
+            if not journal_id:
+                return {'error': 'Missing journal_id'}
+            if amount in (None, '', False):
+                return {'error': 'Missing amount'}
+
+            try:
+                amount = float(amount)
+            except Exception:
+                return {'error': f"Invalid amount '{amount}'"}
+            if amount <= 0:
+                return {'error': 'amount must be greater than 0'}
+
+            journal = request.env['account.journal'].sudo().browse(int(journal_id)).exists()
+            if not journal:
+                return {'error': f"Journal not found (id={journal_id})"}
+
+            salary_account = request.env['account.account'].sudo().search([('code', '=', '60')], limit=1)
+            if not salary_account:
+                return {'error': "Salary account with code '60' not found"}
+
+            liquidity_account = self._get_journal_liquidity_account(journal)
+            if not liquidity_account:
+                return {'error': f"Journal '{journal.name}' has no liquidity/default account configured."}
+
+            partner = request.env['res.partner'].sudo().browse()
+            if partner_id:
+                partner = request.env['res.partner'].sudo().browse(int(partner_id)).exists()
+                if not partner:
+                    return {'error': f"Partner not found (id={partner_id})"}
+            elif partner_name:
+                partner = request.env['res.partner'].sudo().search([('name', '=', partner_name)], limit=1)
+                if not partner:
+                    partner = request.env['res.partner'].sudo().create({'name': partner_name})
+
+            line_partner_id = partner.id if partner else False
+            move_vals = {
+                'move_type': 'entry',
+                'journal_id': journal.id,
+                'date': payment_date,
+                'ref': reference,
+                'line_ids': [
+                    (0, 0, {
+                        'name': reference,
+                        'account_id': salary_account.id,
+                        'debit': amount,
+                        'credit': 0.0,
+                        'partner_id': line_partner_id,
+                    }),
+                    (0, 0, {
+                        'name': reference,
+                        'account_id': liquidity_account.id,
+                        'debit': 0.0,
+                        'credit': amount,
+                        'partner_id': line_partner_id,
+                    }),
+                ],
+            }
+
+            move = request.env['account.move'].sudo().create(move_vals)
+            move.action_post()
+
+            _logger.info(
+                "Payroll payment registered as move %s using journal %s for amount %s",
+                move.id, journal.id, amount,
+            )
+            return {
+                'success': 'Payroll payment registered',
+                'move_id': move.id,
+                'move_name': move.name,
+                'journal_id': journal.id,
+                'amount': amount,
+                'payment_date': str(payment_date),
+                'salary_account_id': salary_account.id,
+                'liquidity_account_id': liquidity_account.id,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error("Failed to register payroll payment: %s", str(e), exc_info=True)
+            return {
+                'error': 'Failed to register payroll payment',
+                'details': str(e),
+            }
+
     @http.route('/api/delete_all_bills_and_payments', type='json', auth='public', methods=['POST'], csrf=False)
     def delete_all_bills_and_payments(self, limit=None, limit_payments=None, limit_bills=None, **kwargs):
         try:
