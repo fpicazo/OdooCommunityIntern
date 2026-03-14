@@ -1342,9 +1342,12 @@ class BillReceiveController(http.Controller):
             if not journal:
                 return {'error': f"Journal not found (id={journal_id})"}
 
-            salary_account = request.env['account.account'].sudo().search([('code', '=', '60')], limit=1)
+            account_model = request.env['account.account'].sudo()
+            salary_account = account_model.search([('code', '=', '601.01.01')], limit=1)
             if not salary_account:
-                return {'error': "Salary account with code '60' not found"}
+                salary_account = account_model.search([('name', 'ilike', 'sueldos y salarios')], limit=1)
+            if not salary_account:
+                return {'error': "Salary account not found. Expected code '601.01.01' or a name like 'Sueldos y salarios'."}
 
             liquidity_account = self._get_journal_liquidity_account(journal)
             if not liquidity_account:
