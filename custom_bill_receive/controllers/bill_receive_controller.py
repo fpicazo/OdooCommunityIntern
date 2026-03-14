@@ -874,6 +874,14 @@ class BillReceiveController(http.Controller):
                     exchange_rate=exchange_rate,
                     rate_date=payment_data.get('invoice_date') or invoice.invoice_date,
                 )
+                self._apply_exchange_rate(
+                    currency=currency,
+                    payload={
+                        'exchange_rate': exchange_rate,
+                        'rate_date': payment_date,
+                    },
+                    default_date=payment_date,
+                )
 
             payment = request.env['account.payment'].sudo().create({
                 'payment_type': 'inbound',
