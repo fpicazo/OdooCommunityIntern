@@ -825,6 +825,10 @@ class BillReceiveController(http.Controller):
 
             amount = payment_data.get('amount', invoice.amount_residual)
             payment_date = payment_data.get('payment_date', fields.Date.context_today(request.env.user))
+            exchange_rate = self._parse_exchange_rate_value(payment_data.get('exchange_rate'))
+
+            if exchange_rate and 'payment_exchange_rate' in invoice._fields:
+                invoice.sudo().write({'payment_exchange_rate': exchange_rate})
 
             payment = request.env['account.payment'].sudo().create({
                 'payment_type': 'inbound',
@@ -837,11 +841,6 @@ class BillReceiveController(http.Controller):
                 'payment_method_line_id': pay_method_line.id,
                 'destination_account_id': receivable_account.id,
             })
-            self._apply_exchange_rate(
-                currency=currency,
-                payload=payment_data,
-                default_date=payment_date,
-            )
             payment.action_post()
             self._assign_payment_to_move(invoice, payment, 'receivable')
 
