@@ -181,6 +181,51 @@ class BillReceiveController(http.Controller):
             lambda m: m.move_type in ('out_invoice', 'out_refund', 'in_invoice', 'in_refund')
         )
 
+    def _assign_payment_to_move(self, move, payment, account_internal_group):
+        """Link a posted payment to a move using Odoo's native outstanding-line flow."""
+        expected_account_type = (
+            'asset_receivable' if account_internal_group == 'receivable' else 'liability_payable'
+        )
+
+        move.invalidate_recordset()
+        payment.invalidate_recordset()
+
+        payment_lines = payment.move_id.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.internal_group == account_internal_group
+        )
+        if not payment_lines:
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
+            )
+        if not payment_lines:
+            raise ValueError(
+                f"Payment {payment.id} has no outstanding {account_internal_group} line to assign."
+            )
+
+        if hasattr(move, 'js_assign_outstanding_line'):
+            move.js_assign_outstanding_line(payment_lines[:1].id)
+            move.invalidate_recordset()
+            payment.invalidate_recordset()
+            return
+
+        move_lines = move.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.internal_group == account_internal_group
+        )
+        if not move_lines:
+            move_lines = move.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
+            )
+
+        lines_to_reconcile = move_lines + payment_lines
+        if not lines_to_reconcile:
+            raise ValueError(
+                f"No unreconciled {account_internal_group} lines found for move {move.id} / payment {payment.id}."
+            )
+
+        lines_to_reconcile.reconcile()
+        move.invalidate_recordset()
+        payment.invalidate_recordset()
+
     def _register_bill_payment(self, bill, pd):
         """Create, post and reconcile an outbound payment for a vendor bill.
 
@@ -237,6 +282,9 @@ class BillReceiveController(http.Controller):
             'destination_account_id': payable_account_id,
         })
         payment.action_post()
+        self._assign_payment_to_move(bill, payment, 'payable')
+        _logger.info(f"Registered and posted payment {payment.id} for bill {bill.id}")
+        return payment
 
         # Invalidate ORM cache so move_id.line_ids reflects the DB state
         # written by action_post() rather than the pre-post cached values.
@@ -707,31 +755,7 @@ class BillReceiveController(http.Controller):
                 'destination_account_id': receivable_account.id,
             })
             payment.action_post()
-
-            invoice_lines = invoice.line_ids.filtered(
-                lambda l: not l.reconciled and l.account_id.account_type == 'asset_receivable'
-            )
-            if not invoice_lines:
-                invoice_lines = invoice.line_ids.filtered(
-                    lambda l: not l.reconciled and l.account_id.internal_group == 'receivable'
-                )
-
-            payment_lines = payment.move_id.line_ids.filtered(
-                lambda l: not l.reconciled and l.account_id.account_type == 'asset_receivable'
-            )
-            if not payment_lines:
-                payment_lines = payment.move_id.line_ids.filtered(
-                    lambda l: not l.reconciled and l.account_id.internal_group == 'receivable'
-                )
-
-            lines_to_reconcile = invoice_lines + payment_lines
-            if lines_to_reconcile:
-                lines_to_reconcile.reconcile()
-            else:
-                _logger.warning(
-                    "No unreconciled receivable lines found for invoice %s / payment %s",
-                    invoice.id, payment.id
-                )
+            self._assign_payment_to_move(invoice, payment, 'receivable')
 
             _logger.info("Registered payment %s and reconciled invoice %s using UUID %s", payment.id, invoice.id, uuid)
             return {
@@ -830,31 +854,7 @@ class BillReceiveController(http.Controller):
                 'destination_account_id': payable_account.id,
             })
             payment.action_post()
-
-            bill_lines = bill.line_ids.filtered(
-                lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
-            )
-            if not bill_lines:
-                bill_lines = bill.line_ids.filtered(
-                    lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
-                )
-
-            payment_lines = payment.move_id.line_ids.filtered(
-                lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
-            )
-            if not payment_lines:
-                payment_lines = payment.move_id.line_ids.filtered(
-                    lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
-                )
-
-            lines_to_reconcile = bill_lines + payment_lines
-            if lines_to_reconcile:
-                lines_to_reconcile.reconcile()
-            else:
-                _logger.warning(
-                    "No unreconciled payable lines found for bill %s / payment %s",
-                    bill.id, payment.id
-                )
+            self._assign_payment_to_move(bill, payment, 'payable')
 
             _logger.info("Registered payment %s and reconciled bill %s using UUID %s", payment.id, bill.id, uuid)
             return {
@@ -951,28 +951,7 @@ class BillReceiveController(http.Controller):
                             'destination_account_id': payable_line.account_id.id,
                         })
                         payment.action_post()
-
-                        bill_lines = bill.line_ids.filtered(
-                            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
-                        )
-                        if not bill_lines:
-                            bill_lines = bill.line_ids.filtered(
-                                lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
-                            )
-
-                        payment_lines = payment.move_id.line_ids.filtered(
-                            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
-                        )
-                        if not payment_lines:
-                            payment_lines = payment.move_id.line_ids.filtered(
-                                lambda l: not l.reconciled and l.account_id.internal_group == 'payable'
-                            )
-
-                        lines_to_reconcile = bill_lines + payment_lines
-                        if lines_to_reconcile:
-                            lines_to_reconcile.reconcile()
-                        else:
-                            _logger.warning("No reconcilable lines for bill %s / payment %s", bill.id, payment.id)
+                        self._assign_payment_to_move(bill, payment, 'payable')
 
                         _logger.info("Bulk payment %s registered for bill %s (%s)", payment.id, bill.id, bill.ref)
                         results.append({
