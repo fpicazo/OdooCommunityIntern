@@ -215,6 +215,10 @@ class BillReceiveController(http.Controller):
         if not payable_line:
             raise ValueError(f"Bill {bill.id} has no payable line to pay.")
 
+        # Capture the account ID now — before the payment is created — so the
+        # reference stays valid regardless of ORM cache state after posting.
+        payable_account_id = payable_line.account_id.id
+
         pay_amount = pd.get('amount', bill.amount_residual)
         pay_date = pd.get('payment_date') or (
             str(bill.invoice_date) if bill.invoice_date
@@ -230,23 +234,34 @@ class BillReceiveController(http.Controller):
             'journal_id': pay_journal.id,
             'currency_id': pay_currency.id,
             'payment_method_line_id': pay_method_line.id,
-            'destination_account_id': payable_line.account_id.id,
+            'destination_account_id': payable_account_id,
         })
         payment.action_post()
 
+        # Invalidate ORM cache so move_id.line_ids reflects the DB state
+        # written by action_post() rather than the pre-post cached values.
+        payment.invalidate_recordset()
+        bill.invalidate_recordset()
+
         bill_lines = bill.line_ids.filtered(
-            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+            lambda l: not l.reconciled and l.account_id.id == payable_account_id
         )
+        # Match by exact account ID first; fall back to account_type.
         payment_lines = payment.move_id.line_ids.filtered(
-            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+            lambda l: not l.reconciled and l.account_id.id == payable_account_id
         )
-        lines_to_reconcile = bill_lines + payment_lines
-        if lines_to_reconcile:
-            lines_to_reconcile.reconcile()
+        if not payment_lines:
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+            )
+
+        if bill_lines and payment_lines:
+            (bill_lines + payment_lines).reconcile()
         else:
             _logger.warning(
-                "No unreconciled payable lines found for bill %s / payment %s",
-                bill.id, payment.id,
+                "Reconciliation skipped for bill %s / payment %s — "
+                "bill_lines=%s payment_lines=%s",
+                bill.id, payment.id, bill_lines.ids, payment_lines.ids,
             )
         _logger.info(f"Registered and posted payment {payment.id} for bill {bill.id}")
         return payment
