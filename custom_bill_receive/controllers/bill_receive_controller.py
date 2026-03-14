@@ -181,6 +181,76 @@ class BillReceiveController(http.Controller):
             lambda m: m.move_type in ('out_invoice', 'out_refund', 'in_invoice', 'in_refund')
         )
 
+    def _register_bill_payment(self, bill, pd):
+        """Create, post and reconcile an outbound payment for a vendor bill.
+
+        Args:
+            bill: account.move record (posted vendor bill)
+            pd:   payment_data dict with at minimum 'journal_id'
+        """
+        pay_journal = request.env['account.journal'].sudo().browse(pd['journal_id']).exists()
+        if not pay_journal:
+            raise ValueError(f"Journal not found (id={pd['journal_id']})")
+
+        pay_method_line = pay_journal.outbound_payment_method_line_ids[:1]
+        if not pay_method_line:
+            raise ValueError(
+                f"No outbound payment method configured on journal "
+                f"'{pay_journal.name}' (id={pay_journal.id})."
+            )
+
+        pay_currency = bill.currency_id
+        currency_code = pd.get('currency_code')
+        if currency_code:
+            found_currency = request.env['res.currency'].sudo().search(
+                [('name', '=', currency_code)], limit=1
+            )
+            if not found_currency:
+                raise ValueError(f"Currency '{currency_code}' not found.")
+            pay_currency = found_currency
+
+        payable_line = bill.line_ids.filtered(
+            lambda l: l.account_id.account_type == 'liability_payable'
+        )[:1]
+        if not payable_line:
+            raise ValueError(f"Bill {bill.id} has no payable line to pay.")
+
+        pay_amount = pd.get('amount', bill.amount_residual)
+        pay_date = pd.get('payment_date') or (
+            str(bill.invoice_date) if bill.invoice_date
+            else fields.Date.context_today(request.env.user)
+        )
+
+        payment = request.env['account.payment'].sudo().create({
+            'payment_type': 'outbound',
+            'partner_type': 'supplier',
+            'partner_id': bill.partner_id.id,
+            'amount': pay_amount,
+            'date': pay_date,
+            'journal_id': pay_journal.id,
+            'currency_id': pay_currency.id,
+            'payment_method_line_id': pay_method_line.id,
+            'destination_account_id': payable_line.account_id.id,
+        })
+        payment.action_post()
+
+        bill_lines = bill.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+        )
+        payment_lines = payment.move_id.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.account_type == 'liability_payable'
+        )
+        lines_to_reconcile = bill_lines + payment_lines
+        if lines_to_reconcile:
+            lines_to_reconcile.reconcile()
+        else:
+            _logger.warning(
+                "No unreconciled payable lines found for bill %s / payment %s",
+                bill.id, payment.id,
+            )
+        _logger.info(f"Registered and posted payment {payment.id} for bill {bill.id}")
+        return payment
+
     @http.route('/api/receive_bills', type='json', auth='public', methods=['POST'], csrf=False)
     def receive_bills(self, bills=None, **kwargs):
         try:
@@ -218,10 +288,22 @@ class BillReceiveController(http.Controller):
                                 allowed_move_types=allowed_move_types,
                             )
                             if existing_move:
-                                errors.append({
-                                    'bill_data': bill_data,
-                                    'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
-                                })
+                                pd = bill_data.get('payment_data')
+                                if pd and pd.get('journal_id') and existing_move.amount_residual > 0:
+                                    try:
+                                        with request.env.cr.savepoint():
+                                            self._register_bill_payment(existing_move, pd)
+                                        created_bills.append(existing_move.id)
+                                    except Exception as pay_err:
+                                        errors.append({
+                                            'bill_data': bill_data,
+                                            'error': f"Bill already exists (id={existing_move.id}) and payment failed: {pay_err}",
+                                        })
+                                else:
+                                    errors.append({
+                                        'bill_data': bill_data,
+                                        'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
+                                    })
                                 continue
                             seen_references.add(reference)
 
@@ -329,70 +411,7 @@ class BillReceiveController(http.Controller):
                         bill.action_post()
 
                         if 'payment_data' in bill_data:
-                            pd = bill_data['payment_data']
-                            pay_journal = request.env['account.journal'].sudo().browse(pd['journal_id']).exists()
-                            if not pay_journal:
-                                raise ValueError(f"Journal not found (id={pd['journal_id']})")
-
-                            pay_method_line = pay_journal.outbound_payment_method_line_ids[:1]
-                            if not pay_method_line:
-                                raise ValueError(
-                                    f"No outbound payment method configured on journal "
-                                    f"'{pay_journal.name}' (id={pay_journal.id})."
-                                )
-
-                            pay_currency = bill.currency_id
-                            currency_code = pd.get('currency_code')
-                            if currency_code:
-                                found_currency = request.env['res.currency'].sudo().search(
-                                    [('name', '=', currency_code)], limit=1
-                                )
-                                if not found_currency:
-                                    raise ValueError(f"Currency '{currency_code}' not found.")
-                                pay_currency = found_currency
-
-                            payable_line = bill.line_ids.filtered(
-                                lambda l: l.account_id.account_type == 'liability_payable'
-                            )[:1]
-                            if not payable_line:
-                                raise ValueError(f"Bill {bill.id} has no payable line to pay.")
-
-                            pay_amount = pd.get('amount', bill.amount_residual)
-                            pay_date = pd.get('payment_date') or (
-                                str(bill.invoice_date) if bill.invoice_date
-                                else fields.Date.context_today(request.env.user)
-                            )
-
-                            payment = request.env['account.payment'].sudo().create({
-                                'payment_type': 'outbound',
-                                'partner_type': 'supplier',
-                                'partner_id': bill.partner_id.id,
-                                'amount': pay_amount,
-                                'date': pay_date,
-                                'journal_id': pay_journal.id,
-                                'currency_id': pay_currency.id,
-                                'payment_method_line_id': pay_method_line.id,
-                                'destination_account_id': payable_line.account_id.id,
-                            })
-                            payment.action_post()
-
-                            bill_lines = bill.line_ids.filtered(
-                                lambda l: not l.reconciled
-                                and l.account_id.account_type == 'liability_payable'
-                            )
-                            payment_lines = payment.move_id.line_ids.filtered(
-                                lambda l: not l.reconciled
-                                and l.account_id.account_type == 'liability_payable'
-                            )
-                            lines_to_reconcile = bill_lines + payment_lines
-                            if lines_to_reconcile:
-                                lines_to_reconcile.reconcile()
-                            else:
-                                _logger.warning(
-                                    "No unreconciled payable lines found for bill %s / payment %s",
-                                    bill.id, payment.id,
-                                )
-                            _logger.info(f"Registered and posted payment {payment.id} for bill {bill.id}")
+                            self._register_bill_payment(bill, bill_data['payment_data'])
 
                         created_bills.append(bill.id)
                         if cfdi_uuid:
