@@ -57,6 +57,68 @@ class BillReceiveController(http.Controller):
         except Exception:
             return {}
 
+    def _parse_exchange_rate_value(self, value):
+        if value in (None, '', False):
+            return None
+        try:
+            parsed = float(value)
+        except Exception as err:
+            raise ValueError(f"Invalid exchange_rate '{value}': {err}")
+        if parsed <= 0:
+            raise ValueError("exchange_rate must be greater than 0.")
+        return parsed
+
+    def _resolve_rate_date(self, payload, default_date=None):
+        rate_date = (payload or {}).get('rate_date') or default_date or fields.Date.context_today(request.env.user)
+        return fields.Date.to_date(rate_date)
+
+    def _apply_exchange_rate(self, currency, payload, default_date=None):
+        exchange_rate = self._parse_exchange_rate_value((payload or {}).get('exchange_rate'))
+        if not exchange_rate or not currency:
+            return False
+
+        company = request.env.company
+        company_currency = company.currency_id
+        if not company_currency or currency == company_currency:
+            return False
+
+        rate_date = self._resolve_rate_date(payload, default_date)
+        rate_model = request.env['res.currency.rate'].sudo()
+
+        rate_vals = {
+            'name': rate_date,
+            'currency_id': currency.id,
+        }
+        if 'company_id' in rate_model._fields:
+            rate_vals['company_id'] = company.id
+        if 'inverse_company_rate' in rate_model._fields:
+            rate_vals['inverse_company_rate'] = exchange_rate
+        elif 'company_rate' in rate_model._fields:
+            rate_vals['company_rate'] = exchange_rate
+        elif 'rate' in rate_model._fields:
+            rate_vals['rate'] = 1.0 / exchange_rate
+        else:
+            raise ValueError("res.currency.rate does not expose a supported rate field.")
+
+        domain = [
+            ('currency_id', '=', currency.id),
+            ('name', '=', rate_date),
+        ]
+        if 'company_id' in rate_model._fields:
+            domain.append(('company_id', '=', company.id))
+
+        existing_rate = rate_model.search(domain, limit=1)
+        if existing_rate:
+            existing_rate.write(rate_vals)
+        else:
+            rate_model.create(rate_vals)
+
+        _logger.info(
+            "Applied exchange rate %s for currency %s on %s",
+            exchange_rate, currency.name, rate_date,
+        )
+        return True
+
     def _extract_uuid_value(self, data):
         value = (
             (data or {}).get('l10n_mx_edi_cfdi_uuid')
@@ -287,6 +349,11 @@ class BillReceiveController(http.Controller):
             'payment_method_line_id': pay_method_line.id,
             'destination_account_id': payable_account_id,
         })
+        self._apply_exchange_rate(
+            currency=pay_currency,
+            payload=pd,
+            default_date=pay_date,
+        )
         payment.action_post()
         self._assign_payment_to_move(bill, payment, 'payable')
         _logger.info(f"Registered and posted payment {payment.id} for bill {bill.id}")
@@ -477,6 +544,11 @@ class BillReceiveController(http.Controller):
                         }
 
                         bill = request.env['account.move'].sudo().create(bill_vals)
+                        self._apply_exchange_rate(
+                            currency=currency,
+                            payload=bill_data,
+                            default_date=bill_data['invoice_date'],
+                        )
                         bill.action_post()
 
                         if 'payment_data' in bill_data:
@@ -670,6 +742,11 @@ class BillReceiveController(http.Controller):
                             invoice_vals['name'] = invoice_data['invoice_name']
 
                         invoice = request.env['account.move'].sudo().create(invoice_vals)
+                        self._apply_exchange_rate(
+                            currency=currency,
+                            payload=invoice_data,
+                            default_date=invoice_data['invoice_date'],
+                        )
                         invoice.action_post()
                         created_invoices.append(invoice.id)
 
@@ -760,6 +837,11 @@ class BillReceiveController(http.Controller):
                 'payment_method_line_id': pay_method_line.id,
                 'destination_account_id': receivable_account.id,
             })
+            self._apply_exchange_rate(
+                currency=currency,
+                payload=payment_data,
+                default_date=payment_date,
+            )
             payment.action_post()
             self._assign_payment_to_move(invoice, payment, 'receivable')
 
@@ -859,6 +941,11 @@ class BillReceiveController(http.Controller):
                 'payment_method_line_id': pay_method_line.id,
                 'destination_account_id': payable_account.id,
             })
+            self._apply_exchange_rate(
+                currency=currency,
+                payload=payment_data,
+                default_date=payment_date,
+            )
             payment.action_post()
             self._assign_payment_to_move(bill, payment, 'payable')
 
@@ -956,6 +1043,11 @@ class BillReceiveController(http.Controller):
                             'payment_method_line_id': pay_method_line.id,
                             'destination_account_id': payable_line.account_id.id,
                         })
+                        self._apply_exchange_rate(
+                            currency=currency,
+                            payload=payload,
+                            default_date=payment_date,
+                        )
                         payment.action_post()
                         self._assign_payment_to_move(bill, payment, 'payable')
 
