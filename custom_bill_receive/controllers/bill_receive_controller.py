@@ -9,10 +9,10 @@ _logger = logging.getLogger(__name__)
 class BillReceiveController(http.Controller):
     SPECIAL_DELETE_CATEGORY = 'santander no aplica - cambio'
     CATEGORY_TO_ACCOUNT_CODE = {
-        'viaticos': '601.90.01',
+        'viaticos': '601.16.01',
         'restaurantes': '601.90.01',
         'honorarios': '601.88.01',
-        'regalias': '601.74.01',
+        'regalias': '601.74.02',
         'asistencia tecnica': '601.97.01',
         'seguros y fianzas': '601.98.01',
         'cuotas al imss': '601.26.01',
