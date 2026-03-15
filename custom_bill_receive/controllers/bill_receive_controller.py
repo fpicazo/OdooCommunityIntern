@@ -531,22 +531,10 @@ class BillReceiveController(http.Controller):
                                 allowed_move_types=allowed_move_types,
                             )
                             if existing_move:
-                                pd = bill_data.get('payment_data')
-                                if pd and pd.get('journal_id') and existing_move.amount_residual > 0:
-                                    try:
-                                        with request.env.cr.savepoint():
-                                            self._register_bill_payment(existing_move, pd)
-                                        created_bills.append(existing_move.id)
-                                    except Exception as pay_err:
-                                        errors.append({
-                                            'bill_data': bill_data,
-                                            'error': f"Bill already exists (id={existing_move.id}) and payment failed: {pay_err}",
-                                        })
-                                else:
-                                    errors.append({
-                                        'bill_data': bill_data,
-                                        'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
-                                    })
+                                errors.append({
+                                    'bill_data': bill_data,
+                                    'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
+                                })
                                 continue
                             seen_references.add(reference)
 
@@ -657,9 +645,6 @@ class BillReceiveController(http.Controller):
                             default_date=bill_data['invoice_date'],
                         )
                         bill.action_post()
-
-                        if 'payment_data' in bill_data:
-                            self._register_bill_payment(bill, bill_data['payment_data'])
 
                         created_bills.append(bill.id)
                         if cfdi_uuid:
@@ -1658,6 +1643,7 @@ class BillReceiveController(http.Controller):
             uuid = uuid or payload.get('uuid')
             account = account or payload.get('account') or payload.get('account_name')
             category = category or payload.get('category')
+            payment_data = payload.get('payment_data') or {}
 
             if not uuid:
                 return {'error': 'Missing uuid'}
@@ -1732,17 +1718,30 @@ class BillReceiveController(http.Controller):
 
             bill.invoice_line_ids.sudo().write({'account_id': target_account.id})
 
+            default_payment_data = {
+                'journal_id': 6,
+                'amount': bill.amount_total or bill.amount_residual,
+                'payment_date': str(bill.invoice_date) if bill.invoice_date else fields.Date.context_today(request.env.user),
+                'currency_code': bill.currency_id.name if bill.currency_id else False,
+            }
+
             recreated_payment_ids = []
             recreation_errors = []
+            payments_to_apply = payment_payloads
+            if payment_data or was_posted:
+                merged_payment_data = dict(default_payment_data)
+                merged_payment_data.update({k: v for k, v in (payment_data or {}).items() if v not in (None, '', False)})
+                payments_to_apply = [merged_payment_data]
+
             if was_posted:
                 bill.action_post()
-                for payment_data in payment_payloads:
+                for payment_payload in payments_to_apply:
                     try:
-                        new_payment = self._register_bill_payment(bill, payment_data)
+                        new_payment = self._register_bill_payment(bill, payment_payload)
                         recreated_payment_ids.append(new_payment.id)
                     except Exception as payment_err:
                         recreation_errors.append({
-                            'payment_data': payment_data,
+                            'payment_data': payment_payload,
                             'error': str(payment_err),
                         })
                         _logger.warning(
