@@ -335,6 +335,26 @@ class BillReceiveController(http.Controller):
         move.invalidate_recordset()
         payment.invalidate_recordset()
 
+    def _get_payment_lines_for_assignment(self, payment, account_internal_group, move=None):
+        expected_account_type = (
+            'asset_receivable' if account_internal_group == 'receivable' else 'liability_payable'
+        )
+        payment.invalidate_recordset()
+
+        payment_lines = payment.move_id.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.internal_group == account_internal_group
+        )
+        if not payment_lines:
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
+            )
+        if not payment_lines and move:
+            move_accounts = move.line_ids.mapped('account_id').ids
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.id in move_accounts
+            )
+        return payment_lines
+
     def _register_bill_payment(self, bill, pd):
         """Create, post and reconcile an outbound payment for a vendor bill.
 
@@ -1644,17 +1664,31 @@ class BillReceiveController(http.Controller):
                 related_payments = self._get_related_payments(bill).filtered(lambda p: p.state == 'posted')
             if bill.line_ids:
                 bill.line_ids.remove_move_reconcile()
+            for payment in related_payments:
+                if payment.move_id and payment.move_id.line_ids:
+                    payment.move_id.line_ids.remove_move_reconcile()
             if was_posted:
                 self._set_record_to_draft(bill)
 
             bill.invoice_line_ids.sudo().write({'account_id': target_account.id})
 
+            reassigned_payment_ids = []
+            reassignment_errors = []
             if was_posted:
                 bill.action_post()
                 for payment in related_payments:
                     try:
-                        self._assign_payment_to_move(bill, payment, 'payable')
+                        payment_lines = self._get_payment_lines_for_assignment(payment, 'payable', move=bill)
+                        if hasattr(bill, 'js_assign_outstanding_line') and payment_lines:
+                            bill.js_assign_outstanding_line(payment_lines[:1].id)
+                        else:
+                            self._assign_payment_to_move(bill, payment, 'payable')
+                        reassigned_payment_ids.append(payment.id)
                     except Exception as payment_err:
+                        reassignment_errors.append({
+                            'payment_id': payment.id,
+                            'error': str(payment_err),
+                        })
                         _logger.warning(
                             "Failed to reassign payment %s to bill %s after account update: %s",
                             payment.id, bill.id, payment_err,
@@ -1678,7 +1712,8 @@ class BillReceiveController(http.Controller):
                 'account_code': target_account.code,
                 'matched_category': category,
                 'updated_line_ids': bill.invoice_line_ids.ids,
-                'reassigned_payment_ids': related_payments.ids,
+                'reassigned_payment_ids': reassigned_payment_ids,
+                'reassignment_errors': reassignment_errors,
             }
         except Exception as e:
             request.env.cr.rollback()
