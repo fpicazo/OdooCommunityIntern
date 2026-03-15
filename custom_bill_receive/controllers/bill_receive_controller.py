@@ -355,6 +355,52 @@ class BillReceiveController(http.Controller):
             )
         return payment_lines
 
+    def _snapshot_payment_data(self, payment):
+        data = {
+            'journal_id': payment.journal_id.id,
+            'amount': payment.amount,
+            'payment_date': str(payment.date) if payment.date else False,
+        }
+        if payment.currency_id:
+            data['currency_code'] = payment.currency_id.name
+        return data
+
+    def _delete_payment_record(self, payment):
+        cr = request.env.cr
+
+        def _sql_force_delete_move(move_id):
+            cr.execute(
+                "DELETE FROM account_partial_reconcile "
+                "WHERE debit_move_id IN (SELECT id FROM account_move_line WHERE move_id = %s) "
+                "   OR credit_move_id IN (SELECT id FROM account_move_line WHERE move_id = %s)",
+                (move_id, move_id),
+            )
+            cr.execute("DELETE FROM account_move_line WHERE move_id = %s", (move_id,))
+            cr.execute("DELETE FROM account_move WHERE id = %s", (move_id,))
+
+        if payment.move_id and payment.move_id.line_ids:
+            payment.move_id.line_ids.remove_move_reconcile()
+
+        payment_id = payment.id
+        payment_move_id = payment.move_id.id if payment.move_id else None
+
+        payment.invalidate_recordset()
+        if payment.state == 'posted':
+            self._set_record_to_draft(payment)
+
+        try:
+            payment.unlink()
+        except Exception as payment_unlink_error:
+            if not self._is_sequence_chain_delete_error(payment_unlink_error):
+                raise
+            _logger.warning(
+                "Payment %s blocked by sequence chain during bill account update; using SQL force-delete.",
+                payment_id,
+            )
+            cr.execute("DELETE FROM account_payment WHERE id = %s", (payment_id,))
+            if payment_move_id:
+                _sql_force_delete_move(payment_move_id)
+
     def _register_bill_payment(self, bill, pd):
         """Create, post and reconcile an outbound payment for a vendor bill.
 
@@ -1660,38 +1706,48 @@ class BillReceiveController(http.Controller):
 
             was_posted = bill.state == 'posted'
             related_payments = request.env['account.payment'].sudo().browse()
+            payment_payloads = []
             if was_posted:
                 related_payments = self._get_related_payments(bill).filtered(lambda p: p.state == 'posted')
+                payment_payloads = [self._snapshot_payment_data(payment) for payment in related_payments]
             if bill.line_ids:
                 bill.line_ids.remove_move_reconcile()
+            deleted_payment_ids = []
+            payment_delete_errors = []
             for payment in related_payments:
-                if payment.move_id and payment.move_id.line_ids:
-                    payment.move_id.line_ids.remove_move_reconcile()
+                try:
+                    self._delete_payment_record(payment)
+                    deleted_payment_ids.append(payment.id)
+                except Exception as payment_err:
+                    payment_delete_errors.append({
+                        'payment_id': payment.id,
+                        'error': str(payment_err),
+                    })
+                    _logger.warning(
+                        "Failed to delete payment %s before bill account update: %s",
+                        payment.id, payment_err,
+                    )
             if was_posted:
                 self._set_record_to_draft(bill)
 
             bill.invoice_line_ids.sudo().write({'account_id': target_account.id})
 
-            reassigned_payment_ids = []
-            reassignment_errors = []
+            recreated_payment_ids = []
+            recreation_errors = []
             if was_posted:
                 bill.action_post()
-                for payment in related_payments:
+                for payment_data in payment_payloads:
                     try:
-                        payment_lines = self._get_payment_lines_for_assignment(payment, 'payable', move=bill)
-                        if hasattr(bill, 'js_assign_outstanding_line') and payment_lines:
-                            bill.js_assign_outstanding_line(payment_lines[:1].id)
-                        else:
-                            self._assign_payment_to_move(bill, payment, 'payable')
-                        reassigned_payment_ids.append(payment.id)
+                        new_payment = self._register_bill_payment(bill, payment_data)
+                        recreated_payment_ids.append(new_payment.id)
                     except Exception as payment_err:
-                        reassignment_errors.append({
-                            'payment_id': payment.id,
+                        recreation_errors.append({
+                            'payment_data': payment_data,
                             'error': str(payment_err),
                         })
                         _logger.warning(
-                            "Failed to reassign payment %s to bill %s after account update: %s",
-                            payment.id, bill.id, payment_err,
+                            "Failed to recreate payment for bill %s after account update: %s",
+                            bill.id, payment_err,
                         )
 
             _logger.info(
@@ -1712,8 +1768,10 @@ class BillReceiveController(http.Controller):
                 'account_code': target_account.code,
                 'matched_category': category,
                 'updated_line_ids': bill.invoice_line_ids.ids,
-                'reassigned_payment_ids': reassigned_payment_ids,
-                'reassignment_errors': reassignment_errors,
+                'deleted_payment_ids': deleted_payment_ids,
+                'payment_delete_errors': payment_delete_errors,
+                'recreated_payment_ids': recreated_payment_ids,
+                'recreation_errors': recreation_errors,
             }
         except Exception as e:
             request.env.cr.rollback()
