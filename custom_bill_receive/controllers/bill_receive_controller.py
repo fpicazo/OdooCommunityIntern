@@ -1639,6 +1639,9 @@ class BillReceiveController(http.Controller):
                 return {'error': f"Account '{target_account.name}' is receivable/payable and cannot be used in bill line items."}
 
             was_posted = bill.state == 'posted'
+            related_payments = request.env['account.payment'].sudo().browse()
+            if was_posted:
+                related_payments = self._get_related_payments(bill).filtered(lambda p: p.state == 'posted')
             if bill.line_ids:
                 bill.line_ids.remove_move_reconcile()
             if was_posted:
@@ -1648,6 +1651,14 @@ class BillReceiveController(http.Controller):
 
             if was_posted:
                 bill.action_post()
+                for payment in related_payments:
+                    try:
+                        self._assign_payment_to_move(bill, payment, 'payable')
+                    except Exception as payment_err:
+                        _logger.warning(
+                            "Failed to reassign payment %s to bill %s after account update: %s",
+                            payment.id, bill.id, payment_err,
+                        )
 
             _logger.info(
                 "Updated bill %s (id=%s, uuid=%s) line accounts to %s (%s)",
@@ -1667,6 +1678,7 @@ class BillReceiveController(http.Controller):
                 'account_code': target_account.code,
                 'matched_category': category,
                 'updated_line_ids': bill.invoice_line_ids.ids,
+                'reassigned_payment_ids': related_payments.ids,
             }
         except Exception as e:
             request.env.cr.rollback()
