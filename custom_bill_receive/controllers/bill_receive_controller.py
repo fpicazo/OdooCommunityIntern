@@ -24,6 +24,49 @@ class BillReceiveController(http.Controller):
         'otros gastos': '601.84.01',
     }
 
+    def _find_existing_tax(self, tax_data, type_tax_use):
+        company = request.env.company
+        tax_name = (tax_data or {}).get('name')
+        tax_amount = float((tax_data or {}).get('amount', 0.0))
+        if not tax_name:
+            raise ValueError("Tax name is required.")
+
+        tax_model = request.env['account.tax'].sudo()
+        domain = [
+            ('amount', '=', tax_amount),
+            ('type_tax_use', '=', type_tax_use),
+        ]
+        if 'company_id' in tax_model._fields:
+            domain.append(('company_id', 'in', [company.id, False]))
+
+        normalized_tax_name = self._normalize_text(tax_name)
+        existing_taxes = tax_model.search(domain)
+        prioritized_taxes = existing_taxes.filtered(
+            lambda tax: not tax.company_id or tax.company_id == company
+        )
+
+        exact_name_tax = prioritized_taxes.filtered(
+            lambda tax: self._normalize_text(tax.name) == normalized_tax_name
+        )[:1]
+        if exact_name_tax:
+            return exact_name_tax
+
+        if 'iva' in normalized_tax_name:
+            iva_tax = prioritized_taxes.filtered(
+                lambda tax: 'iva' in self._normalize_text(tax.name)
+                or (tax.tax_group_id and 'iva' in self._normalize_text(tax.tax_group_id.name))
+            )[:1]
+            if iva_tax:
+                return iva_tax
+
+        fallback_tax = prioritized_taxes[:1]
+        if fallback_tax:
+            return fallback_tax
+
+        raise ValueError(
+            f"No existing tax found for '{tax_name}' ({tax_amount}%) with use '{type_tax_use}'."
+        )
+
     def _normalize_text(self, value):
         text = (value or '').strip().lower()
         text = ''.join(
@@ -597,25 +640,18 @@ class BillReceiveController(http.Controller):
 
                             tax_ids = []
                             for tax in line.get('tax_ids', []):
-                                existing_tax = request.env['account.tax'].sudo().search([
-                                    ('name', '=', tax['name'])
-                                ], limit=1)
-                                if existing_tax:
-                                    tax_ids.append(existing_tax.id)
-                                else:
-                                    try:
-                                        new_tax = request.env['account.tax'].sudo().create({
-                                            'name': tax['name'],
-                                            'amount': tax['amount'],
-                                            'type_tax_use': 'purchase',
-                                        })
-                                        tax_ids.append(new_tax.id)
-                                    except Exception as e:
-                                        errors.append({
-                                            'line_item': line,
-                                            'error': f'Failed to create tax: {str(e)}'
-                                        })
-                                        continue
+                                try:
+                                    resolved_tax = self._find_existing_tax(
+                                        tax_data=tax,
+                                        type_tax_use='purchase',
+                                    )
+                                    tax_ids.append(resolved_tax.id)
+                                except Exception as e:
+                                    errors.append({
+                                        'line_item': line,
+                                        'error': f'Failed to create tax: {str(e)}'
+                                    })
+                                    continue
 
                             invoice_line_ids.append((0, 0, {
                                 'name': line['name'],
@@ -764,18 +800,11 @@ class BillReceiveController(http.Controller):
 
                             tax_ids = []
                             for tax in line.get('tax_ids', []):
-                                existing_tax = request.env['account.tax'].sudo().search([
-                                    ('name', '=', tax['name'])
-                                ], limit=1)
-                                if existing_tax:
-                                    tax_ids.append(existing_tax.id)
-                                else:
-                                    new_tax = request.env['account.tax'].sudo().create({
-                                        'name': tax['name'],
-                                        'amount': tax['amount'],
-                                        'type_tax_use': 'sale',
-                                    })
-                                    tax_ids.append(new_tax.id)
+                                resolved_tax = self._find_existing_tax(
+                                    tax_data=tax,
+                                    type_tax_use='sale',
+                                )
+                                tax_ids.append(resolved_tax.id)
 
                             resolved_account_id = False
                             requested_account_id = line.get('account_id')
