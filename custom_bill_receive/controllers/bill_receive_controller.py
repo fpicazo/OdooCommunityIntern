@@ -45,19 +45,41 @@ class BillReceiveController(http.Controller):
             lambda tax: not tax.company_id or tax.company_id == company
         )
 
+        exact_name_with_group_tax = prioritized_taxes.filtered(
+            lambda tax: self._normalize_text(tax.name) == normalized_tax_name
+            and tax.tax_group_id
+            and self._normalize_text(tax.tax_group_id.name) == normalized_tax_name
+        )[:1]
+        if exact_name_with_group_tax:
+            return exact_name_with_group_tax
+
         exact_name_tax = prioritized_taxes.filtered(
             lambda tax: self._normalize_text(tax.name) == normalized_tax_name
         )[:1]
-        if exact_name_tax:
+        if exact_name_tax and 'iva' not in normalized_tax_name:
             return exact_name_tax
 
         if 'iva' in normalized_tax_name:
+            iva_tax_with_group = prioritized_taxes.filtered(
+                lambda tax: (
+                    'iva' in self._normalize_text(tax.name)
+                    or (tax.tax_group_id and 'iva' in self._normalize_text(tax.tax_group_id.name))
+                )
+                and tax.tax_group_id
+                and self._normalize_text(tax.tax_group_id.name) == normalized_tax_name
+            )[:1]
+            if iva_tax_with_group:
+                return iva_tax_with_group
+
             iva_tax = prioritized_taxes.filtered(
                 lambda tax: 'iva' in self._normalize_text(tax.name)
                 or (tax.tax_group_id and 'iva' in self._normalize_text(tax.tax_group_id.name))
             )[:1]
             if iva_tax:
                 return iva_tax
+
+        if exact_name_tax:
+            return exact_name_tax
 
         fallback_tax = prioritized_taxes[:1]
         if fallback_tax:
