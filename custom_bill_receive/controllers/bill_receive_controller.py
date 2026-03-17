@@ -251,21 +251,21 @@ class BillReceiveController(http.Controller):
         move = account_move.search(domain, limit=1)
         return account_move, move
 
-    def _find_move_by_folio(self, folio, allowed_move_types, allowed_states=None):
+    def _find_move_by_cfdi_uuid(self, uuid, allowed_move_types, allowed_states=None):
         account_move = request.env['account.move'].sudo()
-        folio_value = str(folio or '').strip()
-        if not folio_value:
+        uuid_value = str(uuid or '').strip().upper()
+        if not uuid_value:
             return account_move, account_move.browse()
 
         base_domain = [('move_type', 'in', allowed_move_types)]
         if allowed_states:
             base_domain.append(('state', 'in', allowed_states))
 
-        move = account_move.search(base_domain + [('ref', '=', folio_value)], limit=1)
-        if move:
-            return account_move, move
+        uuid_domain = self._build_uuid_domain(account_move, uuid_value)
+        if uuid_domain is None:
+            return account_move, None
 
-        move = account_move.search(base_domain + [('name', '=', folio_value)], limit=1)
+        move = account_move.search(base_domain + uuid_domain, limit=1)
         return account_move, move
 
     def _build_uuid_domain(self, account_move, uuid):
@@ -992,13 +992,13 @@ class BillReceiveController(http.Controller):
             if not credit_note.get('invoice_line_ids'):
                 return {'error': 'Missing invoice_line_ids'}
 
-            _, related_invoice = self._find_move_by_folio(
-                folio=cfdi_relacionado,
+            _, related_invoice = self._find_move_by_cfdi_uuid(
+                uuid=cfdi_relacionado,
                 allowed_move_types=['out_invoice'],
                 allowed_states=['posted'],
             )
             if not related_invoice:
-                return {'error': f"Related invoice not found for folio '{cfdi_relacionado}'"}
+                return {'error': f"Related invoice not found for l10n_mx_edi_cfdi_uuid '{cfdi_relacionado}'"}
 
             reference = self._extract_reference_value(credit_note)
             if reference:
@@ -1157,7 +1157,7 @@ class BillReceiveController(http.Controller):
                 credit_move.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
 
             _logger.info(
-                "Created credit note %s and applied it to invoice %s using folio %s",
+                "Created credit note %s and applied it to invoice %s using CFDI related UUID %s",
                 credit_move.id, related_invoice.id, cfdi_relacionado,
             )
             return {
