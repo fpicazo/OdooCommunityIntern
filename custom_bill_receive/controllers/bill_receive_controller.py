@@ -992,13 +992,13 @@ class BillReceiveController(http.Controller):
             if not credit_note.get('invoice_line_ids'):
                 return {'error': 'Missing invoice_line_ids'}
 
-            _, related_invoice = self._find_move_by_cfdi_uuid(
+            _, related_bill = self._find_move_by_cfdi_uuid(
                 uuid=cfdi_relacionado,
-                allowed_move_types=['out_invoice'],
+                allowed_move_types=['in_invoice'],
                 allowed_states=['posted'],
             )
-            if not related_invoice:
-                return {'error': f"Related invoice not found for l10n_mx_edi_cfdi_uuid '{cfdi_relacionado}'"}
+            if not related_bill:
+                return {'error': f"Related bill not found for l10n_mx_edi_cfdi_uuid '{cfdi_relacionado}'"}
 
             reference = self._extract_reference_value(credit_note)
             if reference:
@@ -1016,12 +1016,12 @@ class BillReceiveController(http.Controller):
             partner_payload = credit_note.get('partner_id') or {}
             raw_vat = (credit_note.get('partner_id') or {}).get('vat', '')
             normalized_vat = self._normalize_vat(raw_vat)
-            partner_name = partner_payload.get('name') or related_invoice.partner_id.name
+            partner_name = partner_payload.get('name') or related_bill.partner_id.name
             mx_country_id = self._get_mx_country_id()
             partner_model = request.env['res.partner'].sudo().with_context(no_vat_validation=True)
 
             if not partner_payload:
-                partner = related_invoice.partner_id
+                partner = related_bill.partner_id
             else:
                 partner = partner_model.search([
                     ('name', '=', partner_name),
@@ -1047,7 +1047,7 @@ class BillReceiveController(http.Controller):
                 if update_vals:
                     partner_model.browse(partner.id).write(update_vals)
 
-            currency_code = credit_note.get('currency_code') or related_invoice.currency_id.name
+            currency_code = credit_note.get('currency_code') or related_bill.currency_id.name
             currency = request.env['res.currency'].sudo().search([
                 ('name', '=', currency_code)
             ], limit=1)
@@ -1115,7 +1115,7 @@ class BillReceiveController(http.Controller):
             ], limit=1)
 
             credit_note_vals = {
-                'move_type': 'out_refund',
+                'move_type': 'in_refund',
                 'journal_id': credit_note['journal_id'],
                 'ref': credit_note.get('name', ''),
                 'l10n_mx_edi_cfdi_uuid': cfdi_uuid,
@@ -1131,10 +1131,10 @@ class BillReceiveController(http.Controller):
                 credit_note_vals['l10n_mx_edi_cfdi_to_public'] = False
 
             related_uuid = ''
-            if 'l10n_mx_edi_cfdi_uuid' in related_invoice._fields:
-                related_uuid = (related_invoice.l10n_mx_edi_cfdi_uuid or '').strip()
-            if not related_uuid and 'folio_fiscal' in related_invoice._fields:
-                related_uuid = (related_invoice.folio_fiscal or '').strip()
+            if 'l10n_mx_edi_cfdi_uuid' in related_bill._fields:
+                related_uuid = (related_bill.l10n_mx_edi_cfdi_uuid or '').strip()
+            if not related_uuid and 'folio_fiscal' in related_bill._fields:
+                related_uuid = (related_bill.folio_fiscal or '').strip()
             if related_uuid and 'l10n_mx_edi_origin' in request.env['account.move']._fields:
                 credit_note_vals['l10n_mx_edi_origin'] = "%s|%s" % (
                     credit_note.get('tipo_relacion', '01'),
@@ -1151,22 +1151,22 @@ class BillReceiveController(http.Controller):
                 default_date=credit_note['invoice_date'],
             )
             credit_move.action_post()
-            self._reconcile_moves(credit_move, related_invoice, 'receivable')
+            self._reconcile_moves(credit_move, related_bill, 'payable')
 
             if cfdi_uuid:
                 credit_move.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
 
             _logger.info(
-                "Created credit note %s and applied it to invoice %s using CFDI related UUID %s",
-                credit_move.id, related_invoice.id, cfdi_relacionado,
+                "Created vendor credit note %s and applied it to bill %s using CFDI related UUID %s",
+                credit_move.id, related_bill.id, cfdi_relacionado,
             )
             return {
                 'success': 'Credit note created and applied',
                 'credit_note_id': credit_move.id,
                 'credit_note_name': credit_move.name,
                 'credit_note_ref': credit_move.ref,
-                'related_invoice_id': related_invoice.id,
-                'related_invoice_name': related_invoice.name,
+                'related_bill_id': related_bill.id,
+                'related_bill_name': related_bill.name,
                 'cfdirelacionado': cfdi_relacionado,
                 'amount_total': credit_move.amount_total,
                 'amount_residual': credit_move.amount_residual,
