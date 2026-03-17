@@ -251,6 +251,23 @@ class BillReceiveController(http.Controller):
         move = account_move.search(domain, limit=1)
         return account_move, move
 
+    def _find_move_by_folio(self, folio, allowed_move_types, allowed_states=None):
+        account_move = request.env['account.move'].sudo()
+        folio_value = str(folio or '').strip()
+        if not folio_value:
+            return account_move, account_move.browse()
+
+        base_domain = [('move_type', 'in', allowed_move_types)]
+        if allowed_states:
+            base_domain.append(('state', 'in', allowed_states))
+
+        move = account_move.search(base_domain + [('ref', '=', folio_value)], limit=1)
+        if move:
+            return account_move, move
+
+        move = account_move.search(base_domain + [('name', '=', folio_value)], limit=1)
+        return account_move, move
+
     def _build_uuid_domain(self, account_move, uuid):
         uuid_filters = []
         if 'folio_fiscal' in account_move._fields:
@@ -419,6 +436,40 @@ class BillReceiveController(http.Controller):
                 lambda l: not l.reconciled and l.account_id.id in move_accounts
             )
         return payment_lines
+
+    def _reconcile_moves(self, source_move, target_move, account_internal_group):
+        expected_account_type = (
+            'asset_receivable' if account_internal_group == 'receivable' else 'liability_payable'
+        )
+
+        source_move.invalidate_recordset()
+        target_move.invalidate_recordset()
+
+        source_lines = source_move.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.internal_group == account_internal_group
+        )
+        if not source_lines:
+            source_lines = source_move.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
+            )
+
+        target_lines = target_move.line_ids.filtered(
+            lambda l: not l.reconciled and l.account_id.internal_group == account_internal_group
+        )
+        if not target_lines:
+            target_lines = target_move.line_ids.filtered(
+                lambda l: not l.reconciled and l.account_id.account_type == expected_account_type
+            )
+
+        lines_to_reconcile = source_lines + target_lines
+        if not lines_to_reconcile:
+            raise ValueError(
+                f"No unreconciled {account_internal_group} lines found for moves {source_move.id} / {target_move.id}."
+            )
+
+        lines_to_reconcile.reconcile()
+        source_move.invalidate_recordset()
+        target_move.invalidate_recordset()
 
     def _snapshot_payment_data(self, payment):
         data = {
@@ -912,6 +963,219 @@ class BillReceiveController(http.Controller):
             _logger.error(f"Failed to process invoices request: {str(e)}", exc_info=True)
             return {
                 'error': 'Failed to process the request',
+                'details': str(e)
+            }
+
+    @http.route('/api/receive_credit_note', type='json', auth='public', methods=['POST'], csrf=False)
+    def receive_credit_note(self, credit_note=None, **kwargs):
+        try:
+            payload = {}
+            if not credit_note:
+                payload = self._extract_json_payload()
+
+            credit_note = credit_note or payload.get('credit_note') or payload
+            if not isinstance(credit_note, dict):
+                return {'error': 'No credit note data received'}
+
+            cfdi_relacionado = str(
+                credit_note.get('cfdirelacionado')
+                or credit_note.get('cfdi_relacionado')
+                or credit_note.get('folio_relacionado')
+                or ''
+            ).strip()
+            if not cfdi_relacionado:
+                return {'error': 'Missing cfdirelacionado'}
+            if not credit_note.get('journal_id'):
+                return {'error': 'Missing journal_id'}
+            if not credit_note.get('invoice_date'):
+                return {'error': 'Missing invoice_date'}
+            if not credit_note.get('invoice_line_ids'):
+                return {'error': 'Missing invoice_line_ids'}
+
+            _, related_invoice = self._find_move_by_folio(
+                folio=cfdi_relacionado,
+                allowed_move_types=['out_invoice'],
+                allowed_states=['posted'],
+            )
+            if not related_invoice:
+                return {'error': f"Related invoice not found for folio '{cfdi_relacionado}'"}
+
+            reference = self._extract_reference_value(credit_note)
+            if reference:
+                _, existing_move = self._find_move_by_reference(
+                    reference=reference,
+                    allowed_move_types=['out_refund'],
+                )
+                if existing_move:
+                    return {
+                        'error': f"Duplicate reference already exists on move id={existing_move.id}: '{reference}'",
+                    }
+
+            cfdi_uuid = self._extract_uuid_value(credit_note)
+
+            partner_payload = credit_note.get('partner_id') or {}
+            raw_vat = (credit_note.get('partner_id') or {}).get('vat', '')
+            normalized_vat = self._normalize_vat(raw_vat)
+            partner_name = partner_payload.get('name') or related_invoice.partner_id.name
+            mx_country_id = self._get_mx_country_id()
+            partner_model = request.env['res.partner'].sudo().with_context(no_vat_validation=True)
+
+            if not partner_payload:
+                partner = related_invoice.partner_id
+            else:
+                partner = partner_model.search([
+                    ('name', '=', partner_name),
+                    ('vat', 'in', [normalized_vat, raw_vat]),
+                ], limit=1)
+                if not partner and partner_name:
+                    partner = partner_model.search([('name', '=', partner_name)], limit=1)
+            if not partner:
+                partner_vals = {
+                    'name': partner_name,
+                    'vat': normalized_vat,
+                    'customer_rank': 1,
+                }
+                if mx_country_id:
+                    partner_vals['country_id'] = mx_country_id
+                partner = partner_model.create(partner_vals)
+            else:
+                update_vals = {}
+                if normalized_vat and partner.vat != normalized_vat:
+                    update_vals['vat'] = normalized_vat
+                if mx_country_id and not partner.country_id:
+                    update_vals['country_id'] = mx_country_id
+                if update_vals:
+                    partner_model.browse(partner.id).write(update_vals)
+
+            currency_code = credit_note.get('currency_code') or related_invoice.currency_id.name
+            currency = request.env['res.currency'].sudo().search([
+                ('name', '=', currency_code)
+            ], limit=1)
+            if not currency:
+                return {'error': f"Currency '{currency_code}' not found."}
+
+            invoice_line_ids = []
+            for line in credit_note.get('invoice_line_ids', []):
+                product = request.env['product.product'].sudo().search([
+                    ('name', '=', line['name'])
+                ], limit=1)
+                if not product:
+                    product = request.env['product.product'].sudo().create({
+                        'name': line['name'],
+                        'type': 'service',
+                    })
+
+                tax_ids = []
+                for tax in line.get('tax_ids', []):
+                    resolved_tax = self._find_existing_tax(
+                        tax_data=tax,
+                        type_tax_use='sale',
+                    )
+                    tax_ids.append(resolved_tax.id)
+
+                resolved_account_id = False
+                requested_account_id = line.get('account_id')
+                if requested_account_id:
+                    requested_account = request.env['account.account'].sudo().browse(requested_account_id).exists()
+                    if requested_account and requested_account.account_type not in ('asset_receivable', 'liability_payable'):
+                        resolved_account_id = requested_account.id
+                    else:
+                        _logger.warning(
+                            "Invalid account_id %s for credit note line '%s'. "
+                            "Expected an income/other account, not receivable/payable.",
+                            requested_account_id, line['name']
+                        )
+
+                if not resolved_account_id:
+                    income_account = product.property_account_income_id or product.categ_id.property_account_income_categ_id
+                    if income_account and income_account.account_type not in ('asset_receivable', 'liability_payable'):
+                        resolved_account_id = income_account.id
+
+                if not resolved_account_id:
+                    raise ValueError(
+                        f"No valid income account found for credit note line '{line['name']}'. "
+                        "Provide a valid income account_id."
+                    )
+
+                invoice_line_ids.append((0, 0, {
+                    'name': line['name'],
+                    'quantity': line['quantity'],
+                    'price_unit': line['price_unit'],
+                    'account_id': resolved_account_id,
+                    'product_id': product.id,
+                    'tax_ids': [(6, 0, tax_ids)],
+                }))
+
+            if not invoice_line_ids:
+                return {'error': 'Missing invoice_line_ids'}
+
+            modo_pago_code = credit_note.get('modo_pago', '99')
+            payment_method = request.env['l10n_mx_edi.payment.method'].sudo().search([
+                ('code', '=', modo_pago_code)
+            ], limit=1)
+
+            credit_note_vals = {
+                'move_type': 'out_refund',
+                'journal_id': credit_note['journal_id'],
+                'ref': credit_note.get('name', ''),
+                'l10n_mx_edi_cfdi_uuid': cfdi_uuid,
+                'invoice_date': credit_note['invoice_date'],
+                'invoice_date_due': credit_note.get('invoice_date_due', credit_note['invoice_date']),
+                'partner_id': partner.id,
+                'invoice_line_ids': invoice_line_ids,
+                'currency_id': currency.id,
+                'l10n_mx_edi_usage': credit_note.get('uso_cfdi', 'G03'),
+                'l10n_mx_edi_payment_method_id': payment_method.id if payment_method else False,
+            }
+            if 'l10n_mx_edi_cfdi_to_public' in request.env['account.move']._fields:
+                credit_note_vals['l10n_mx_edi_cfdi_to_public'] = False
+
+            related_uuid = ''
+            if 'l10n_mx_edi_cfdi_uuid' in related_invoice._fields:
+                related_uuid = (related_invoice.l10n_mx_edi_cfdi_uuid or '').strip()
+            if not related_uuid and 'folio_fiscal' in related_invoice._fields:
+                related_uuid = (related_invoice.folio_fiscal or '').strip()
+            if related_uuid and 'l10n_mx_edi_origin' in request.env['account.move']._fields:
+                credit_note_vals['l10n_mx_edi_origin'] = "%s|%s" % (
+                    credit_note.get('tipo_relacion', '01'),
+                    related_uuid,
+                )
+
+            if credit_note.get('invoice_name'):
+                credit_note_vals['name'] = credit_note['invoice_name']
+
+            credit_move = request.env['account.move'].sudo().create(credit_note_vals)
+            self._apply_exchange_rate(
+                currency=currency,
+                payload=credit_note,
+                default_date=credit_note['invoice_date'],
+            )
+            credit_move.action_post()
+            self._reconcile_moves(credit_move, related_invoice, 'receivable')
+
+            if cfdi_uuid:
+                credit_move.sudo().write({'l10n_mx_edi_cfdi_uuid': cfdi_uuid})
+
+            _logger.info(
+                "Created credit note %s and applied it to invoice %s using folio %s",
+                credit_move.id, related_invoice.id, cfdi_relacionado,
+            )
+            return {
+                'success': 'Credit note created and applied',
+                'credit_note_id': credit_move.id,
+                'credit_note_name': credit_move.name,
+                'credit_note_ref': credit_move.ref,
+                'related_invoice_id': related_invoice.id,
+                'related_invoice_name': related_invoice.name,
+                'cfdirelacionado': cfdi_relacionado,
+                'amount_total': credit_move.amount_total,
+                'amount_residual': credit_move.amount_residual,
+            }
+        except Exception as e:
+            request.env.cr.rollback()
+            _logger.error("Failed to create credit note: %s", str(e), exc_info=True)
+            return {
+                'error': 'Failed to create credit note',
                 'details': str(e)
             }
 
