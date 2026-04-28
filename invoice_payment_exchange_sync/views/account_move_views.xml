@@ -12,6 +12,8 @@
                         invisible="state != 'posted' or currency_id == payment_company_currency_id or not amount_mxn"/>
             </xpath>
             <xpath expr="//field[@name='invoice_date']" position="after">
+                <field name="payment_date_mxn"
+                       invisible="currency_id == payment_company_currency_id"/>
                 <field name="amount_mxn"
                        invisible="currency_id == payment_company_currency_id"/>
             </xpath>

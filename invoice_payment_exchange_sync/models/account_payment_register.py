@@ -12,11 +12,14 @@ class AccountPaymentRegister(models.TransientModel):
 
         amount_mxn = self.env.context.get('invoice_amount_mxn')
         company_currency_id = self.env.context.get('invoice_company_currency_id')
+        payment_date_mxn = self.env.context.get('invoice_payment_date_mxn')
 
         if amount_mxn:
             values['amount'] = amount_mxn
         if company_currency_id and 'currency_id' in self._fields:
             values['currency_id'] = company_currency_id
+        if payment_date_mxn and 'payment_date' in self._fields:
+            values['payment_date'] = payment_date_mxn
         return values
 
     def _create_payments(self):

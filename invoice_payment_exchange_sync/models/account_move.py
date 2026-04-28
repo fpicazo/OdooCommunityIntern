@@ -16,6 +16,10 @@ class AccountMove(models.Model):
         currency_field='payment_company_currency_id',
         help='If filled, Register Payment will use this amount in company currency.',
     )
+    payment_date_mxn = fields.Date(
+        string='Payment Date',
+        help='If filled, the MXN payment will be registered on this date.',
+    )
 
     def action_register_mxn_payment(self):
         self.ensure_one()
@@ -29,6 +33,7 @@ class AccountMove(models.Model):
             'use_invoice_amount_mxn': True,
             'invoice_amount_mxn': self.amount_mxn,
             'invoice_company_currency_id': self.company_id.currency_id.id,
+            'invoice_payment_date_mxn': self.payment_date_mxn,
             'sync_invoice_rate_after_payment': True,
             'active_model': 'account.move',
             'active_ids': self.ids,
