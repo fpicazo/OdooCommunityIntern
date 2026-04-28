@@ -21,26 +21,30 @@ class AccountMove(models.Model):
         payments = self._get_linked_payments()
         if not payments:
             raise UserError(_('No existing payments are linked to this invoice.'))
+        if len(payments) > 1:
+            raise UserError(
+                _('This action currently supports invoices with exactly one linked payment.')
+            )
 
-        exchange_rate = self._get_invoice_exchange_rate()
+        payment = payments[:1]
+        exchange_rate = self._get_payment_exchange_rate(payment)
         if not exchange_rate:
-            raise UserError(_('Could not determine the exchange rate for invoice %s.') % (self.display_name,))
+            raise UserError(
+                _('Could not determine the exchange rate from payment %s.') % (payment.display_name,)
+            )
 
-        synced_count = 0
-        for payment in payments:
-            if self._convert_payment_to_company_currency(payment, exchange_rate):
-                synced_count += 1
+        self._sync_invoice_to_payment_rate(payment, exchange_rate)
 
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
             'params': {
-                'title': _('Payments Converted'),
+                'title': _('Invoice Rate Updated'),
                 'message': _(
-                    'Converted %s existing payment(s) to %s using the invoice exchange rate.'
+                    'Updated invoice %s to use the exchange rate from payment %s.'
                 ) % (
-                    synced_count,
-                    self.company_id.currency_id.name,
+                    self.display_name,
+                    payment.display_name,
                 ),
                 'type': 'success',
                 'sticky': False,
@@ -63,85 +67,6 @@ class AccountMove(models.Model):
         if payment_moves:
             payments |= self.env['account.payment'].search([('move_id', 'in', payment_moves.ids)])
         return payments
-
-    def _get_invoice_exchange_rate(self):
-        self.ensure_one()
-        invoice_currency_rate = self._fields.get('invoice_currency_rate')
-        if invoice_currency_rate and self.invoice_currency_rate:
-            return 1.0 / self.invoice_currency_rate
-
-        rate_date = self.invoice_date or fields.Date.context_today(self)
-        conversion_method = getattr(self.currency_id, '_get_conversion_rate', None)
-        if conversion_method:
-            return conversion_method(
-                self.currency_id, self.company_id.currency_id, self.company_id, rate_date
-            )
-
-        rate_model = self.env['res.currency.rate'].sudo()
-        domain = [
-            ('currency_id', '=', self.currency_id.id),
-            ('name', '<=', rate_date),
-        ]
-        if 'company_id' in rate_model._fields:
-            domain.append(('company_id', 'in', [self.company_id.id, False]))
-
-        existing_rate = rate_model.search(domain, order='name desc', limit=1)
-        if not existing_rate:
-            return False
-        if 'inverse_company_rate' in existing_rate._fields and existing_rate.inverse_company_rate:
-            return existing_rate.inverse_company_rate
-        if 'company_rate' in existing_rate._fields and existing_rate.company_rate:
-            return existing_rate.company_rate
-        if 'rate' in existing_rate._fields and existing_rate.rate:
-            return 1.0 / existing_rate.rate
-        return False
-
-    def _convert_payment_to_company_currency(self, payment, exchange_rate):
-        self.ensure_one()
-        company_currency = self.company_id.currency_id
-        payment_currency = payment.currency_id or company_currency
-
-        if payment_currency == company_currency:
-            return False
-
-        converted_amount = company_currency.round(payment.amount * exchange_rate)
-        if converted_amount <= 0:
-            raise UserError(
-                _('Converted MXN amount must be greater than zero for payment %s.')
-                % (payment.display_name,)
-            )
-
-        account_internal_group = self._get_payment_account_internal_group()
-        payment_move = payment.move_id
-        counterpart_line = self._get_payment_counterpart_line(payment, account_internal_group)
-        foreign_currency = counterpart_line.currency_id or self.currency_id
-        foreign_amount = counterpart_line.amount_currency
-
-        if payment_move and payment_move.line_ids:
-            payment_move.line_ids.remove_move_reconcile()
-
-        if payment.state == 'posted':
-            self._set_record_to_draft(payment)
-
-        write_vals = {
-            'currency_id': company_currency.id,
-            'amount': converted_amount,
-        }
-        if 'date' in payment._fields and payment.date:
-            write_vals['date'] = payment.date
-        payment.write(write_vals)
-        self._rewrite_payment_move_lines(
-            payment=payment,
-            account_internal_group=account_internal_group,
-            foreign_currency=foreign_currency,
-            foreign_amount=foreign_amount,
-        )
-
-        if payment.state != 'posted':
-            payment.action_post()
-
-        self._reconcile_payment_with_invoice(payment, account_internal_group)
-        return True
 
     def _get_payment_account_internal_group(self):
         self.ensure_one()
@@ -176,27 +101,60 @@ class AccountMove(models.Model):
             )
         return counterpart_line
 
-    def _rewrite_payment_move_lines(self, payment, account_internal_group, foreign_currency, foreign_amount):
-        payment_move = payment.move_id
-        if not payment_move:
-            raise UserError(_('Payment %s has no journal entry.') % (payment.display_name,))
-
-        company_currency = self.company_id.currency_id
+    def _get_payment_exchange_rate(self, payment):
+        self.ensure_one()
+        account_internal_group = self._get_payment_account_internal_group()
         counterpart_line = self._get_payment_counterpart_line(payment, account_internal_group)
-        liquidity_lines = payment_move.line_ids - counterpart_line
+        foreign_amount = abs(counterpart_line.amount_currency)
+        company_amount = abs(counterpart_line.balance)
 
-        counterpart_vals = {
-            'currency_id': (foreign_currency or company_currency).id,
-            'amount_currency': foreign_amount,
-        }
-        counterpart_line.write(counterpart_vals)
+        if not foreign_amount or not company_amount:
+            return False
+        return company_amount / foreign_amount
 
-        for liquidity_line in liquidity_lines:
-            company_amount_currency = liquidity_line.debit - liquidity_line.credit
-            liquidity_line.write({
-                'currency_id': company_currency.id,
-                'amount_currency': company_amount_currency,
-            })
+    def _sync_invoice_to_payment_rate(self, payment, exchange_rate):
+        self.ensure_one()
+        account_internal_group = self._get_payment_account_internal_group()
+        exchange_moves = self._get_exchange_difference_moves()
+
+        self._remove_reconciliation_with_payment(payment)
+        self._remove_exchange_difference_moves(exchange_moves)
+
+        was_posted = self.state == 'posted'
+        if was_posted:
+            self._set_record_to_draft(self)
+
+        inverse_rate = 1.0 / exchange_rate
+        write_vals = {}
+        if 'invoice_currency_rate' in self._fields:
+            write_vals['invoice_currency_rate'] = inverse_rate
+        if 'date' in payment._fields and payment.date and self.invoice_date != payment.date:
+            write_vals['invoice_date'] = payment.date
+        if write_vals:
+            self.with_context(check_move_validity=False).write(write_vals)
+
+        if was_posted:
+            self.action_post()
+
+        self._reconcile_payment_with_invoice(payment, account_internal_group)
+
+    def _remove_reconciliation_with_payment(self, payment):
+        self.ensure_one()
+        lines = self.line_ids | payment.move_id.line_ids
+        if lines:
+            lines.remove_move_reconcile()
+
+    def _get_exchange_difference_moves(self):
+        self.ensure_one()
+        return (
+            self.line_ids.matched_debit_ids.exchange_move_id
+            | self.line_ids.matched_credit_ids.exchange_move_id
+        ).filtered(lambda move: move)
+
+    def _remove_exchange_difference_moves(self, moves):
+        for move in moves.filtered(lambda m: m.state == 'posted'):
+            self._set_record_to_draft(move)
+            move.with_context(force_delete=True).unlink()
 
     def _reconcile_payment_with_invoice(self, payment, account_internal_group):
         self.ensure_one()

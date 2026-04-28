@@ -7,7 +7,7 @@
             <xpath expr="//header" position="inside">
                 <button name="action_sync_existing_payments_exchange_rate"
                         type="object"
-                        string="Convert Existing Payments to MXN"
+                        string="Sync Invoice Rate to Payment"
                         class="oe_highlight"
                         invisible="state != 'posted' or payment_state == 'not_paid'"/>
             </xpath>
