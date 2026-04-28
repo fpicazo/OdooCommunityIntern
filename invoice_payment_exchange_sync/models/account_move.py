@@ -19,33 +19,21 @@ class AccountMove(models.Model):
 
     def action_register_mxn_payment(self):
         self.ensure_one()
-        self._sync_invoice_rate_from_amount_mxn()
-        return self.action_register_payment()
-
-    def action_register_payment(self):
         action = super().action_register_payment()
-
-        if len(self) != 1:
-            return action
-
-        if (
-            self.move_type not in ('out_invoice', 'out_refund', 'in_invoice', 'in_refund')
-            or not self.currency_id
-            or self.currency_id == self.company_id.currency_id
-            or not self.amount_mxn
-        ):
-            return action
-
         action_context = dict(action.get('context', {}))
         action_context.update({
             'use_invoice_amount_mxn': True,
             'invoice_amount_mxn': self.amount_mxn,
             'invoice_company_currency_id': self.company_id.currency_id.id,
+            'sync_invoice_rate_after_payment': True,
+            'active_model': 'account.move',
+            'active_ids': self.ids,
+            'active_id': self.id,
         })
         action['context'] = action_context
         return action
 
-    def _sync_invoice_rate_from_amount_mxn(self):
+    def _sync_invoice_rate_from_amount_mxn(self, payment=None):
         self.ensure_one()
 
         if self.move_type not in ('out_invoice', 'out_refund', 'in_invoice', 'in_refund'):
@@ -65,11 +53,17 @@ class AccountMove(models.Model):
         if inverse_rate <= 0:
             raise UserError(_('The calculated invoice exchange rate must be greater than zero.'))
 
+        exchange_moves = self._get_exchange_difference_moves()
+        if payment:
+            self._remove_reconciliation_with_payment(payment)
+        self._remove_exchange_difference_moves(exchange_moves)
         self._set_record_to_draft(self)
         self.with_context(check_move_validity=False).write({
             'invoice_currency_rate': inverse_rate,
         })
         self.action_post()
+        if payment:
+            self._reconcile_payment_with_invoice(payment)
 
     def _set_record_to_draft(self, record):
         if hasattr(record, 'button_draft'):
@@ -79,3 +73,61 @@ class AccountMove(models.Model):
             record.action_draft()
             return
         raise UserError(_('Cannot set %s to draft.') % (record.display_name,))
+
+    def _get_payment_account_internal_group(self):
+        self.ensure_one()
+        if self.move_type in ('out_invoice', 'out_refund'):
+            return 'receivable'
+        return 'payable'
+
+    def _remove_reconciliation_with_payment(self, payment):
+        self.ensure_one()
+        lines = self.line_ids | payment.move_id.line_ids
+        if lines:
+            lines.remove_move_reconcile()
+
+    def _get_exchange_difference_moves(self):
+        self.ensure_one()
+        return (
+            self.line_ids.matched_debit_ids.exchange_move_id
+            | self.line_ids.matched_credit_ids.exchange_move_id
+        ).filtered(lambda move: move)
+
+    def _remove_exchange_difference_moves(self, moves):
+        for move in moves.filtered(lambda m: m.state == 'posted'):
+            self._set_record_to_draft(move)
+            move.with_context(force_delete=True).unlink()
+
+    def _reconcile_payment_with_invoice(self, payment):
+        self.ensure_one()
+        account_internal_group = self._get_payment_account_internal_group()
+        expected_account_type = (
+            'asset_receivable' if account_internal_group == 'receivable' else 'liability_payable'
+        )
+
+        self.invalidate_recordset()
+        payment.invalidate_recordset()
+
+        invoice_lines = self.line_ids.filtered(
+            lambda line: not line.reconciled and line.account_id.internal_group == account_internal_group
+        )
+        if not invoice_lines:
+            invoice_lines = self.line_ids.filtered(
+                lambda line: not line.reconciled and line.account_id.account_type == expected_account_type
+            )
+
+        payment_lines = payment.move_id.line_ids.filtered(
+            lambda line: not line.reconciled and line.account_id.internal_group == account_internal_group
+        )
+        if not payment_lines:
+            payment_lines = payment.move_id.line_ids.filtered(
+                lambda line: not line.reconciled and line.account_id.account_type == expected_account_type
+            )
+
+        lines_to_reconcile = invoice_lines + payment_lines
+        if not lines_to_reconcile:
+            raise UserError(
+                _('Could not find lines to reconcile for payment %s.') % (payment.display_name,)
+            )
+
+        lines_to_reconcile.reconcile()

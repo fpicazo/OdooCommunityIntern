@@ -18,3 +18,15 @@ class AccountPaymentRegister(models.TransientModel):
         if company_currency_id and 'currency_id' in self._fields:
             values['currency_id'] = company_currency_id
         return values
+
+    def _create_payments(self):
+        payments = super()._create_payments()
+        if not self.env.context.get('sync_invoice_rate_after_payment'):
+            return payments
+
+        invoices = self.env['account.move'].browse(self.env.context.get('active_ids', [])).exists()
+        if len(invoices) != 1 or len(payments) != 1:
+            return payments
+
+        invoices._sync_invoice_rate_from_amount_mxn(payment=payments[:1])
+        return payments
