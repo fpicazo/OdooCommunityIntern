@@ -4,12 +4,9 @@
         <field name="model">account.move</field>
         <field name="inherit_id" ref="account.view_move_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//header" position="inside">
-                <button name="action_sync_existing_payments_exchange_rate"
-                        type="object"
-                        string="Sync Invoice Rate to Payment"
-                        class="oe_highlight"
-                        invisible="state != 'posted' or payment_state == 'not_paid'"/>
+            <xpath expr="//field[@name='invoice_date']" position="after">
+                <field name="amount_mxn"
+                       invisible="currency_id == payment_company_currency_id"/>
             </xpath>
         </field>
     </record>

@@ -1,0 +1,20 @@
+from odoo import api, models
+
+
+class AccountPaymentRegister(models.TransientModel):
+    _inherit = 'account.payment.register'
+
+    @api.model
+    def default_get(self, fields_list):
+        values = super().default_get(fields_list)
+        if not self.env.context.get('use_invoice_amount_mxn'):
+            return values
+
+        amount_mxn = self.env.context.get('invoice_amount_mxn')
+        company_currency_id = self.env.context.get('invoice_company_currency_id')
+
+        if amount_mxn:
+            values['amount'] = amount_mxn
+        if company_currency_id and 'currency_id' in self._fields:
+            values['currency_id'] = company_currency_id
+        return values
