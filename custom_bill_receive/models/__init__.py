@@ -1,4 +1,5 @@
 from . import bill_receive
+from . import account_payment
 from odoo import models, fields
 
 class BillReceive(models.Model):
