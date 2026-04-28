@@ -181,19 +181,21 @@ class AccountMove(models.Model):
         if not payment_move:
             raise UserError(_('Payment %s has no journal entry.') % (payment.display_name,))
 
+        company_currency = self.company_id.currency_id
         counterpart_line = self._get_payment_counterpart_line(payment, account_internal_group)
         liquidity_lines = payment_move.line_ids - counterpart_line
 
         counterpart_vals = {
-            'currency_id': foreign_currency.id if foreign_currency else False,
+            'currency_id': (foreign_currency or company_currency).id,
             'amount_currency': foreign_amount,
         }
         counterpart_line.write(counterpart_vals)
 
         for liquidity_line in liquidity_lines:
+            company_amount_currency = liquidity_line.debit - liquidity_line.credit
             liquidity_line.write({
-                'currency_id': False,
-                'amount_currency': 0.0,
+                'currency_id': company_currency.id,
+                'amount_currency': company_amount_currency,
             })
 
     def _reconcile_payment_with_invoice(self, payment, account_internal_group):
