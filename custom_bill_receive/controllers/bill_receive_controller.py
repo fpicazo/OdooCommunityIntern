@@ -483,6 +483,7 @@ class BillReceiveController(http.Controller):
 
     def _delete_payment_record(self, payment):
         cr = request.env.cr
+        used_sql_fallback = False
 
         def _sql_force_delete_move(move_id):
             cr.execute(
@@ -493,6 +494,17 @@ class BillReceiveController(http.Controller):
             )
             cr.execute("DELETE FROM account_move_line WHERE move_id = %s", (move_id,))
             cr.execute("DELETE FROM account_move WHERE id = %s", (move_id,))
+
+        def _sql_force_delete_payment(payment_id, move_id=None):
+            # Some Odoo versions store the reverse pointer on account.move.
+            try:
+                cr.execute("UPDATE account_move SET payment_id = NULL WHERE payment_id = %s", (payment_id,))
+            except Exception:
+                pass
+
+            cr.execute("DELETE FROM account_payment WHERE id = %s", (payment_id,))
+            if move_id:
+                _sql_force_delete_move(move_id)
 
         if payment.move_id and payment.move_id.line_ids:
             payment.move_id.line_ids.remove_move_reconcile()
@@ -505,7 +517,11 @@ class BillReceiveController(http.Controller):
             self._set_record_to_draft(payment)
 
         try:
-            payment.unlink()
+            payment.with_context(
+                force_delete=True,
+                check_move_validity=False,
+                skip_account_move_synchronization=True,
+            ).unlink()
         except Exception as payment_unlink_error:
             if not self._is_sequence_chain_delete_error(payment_unlink_error):
                 raise
@@ -513,9 +529,9 @@ class BillReceiveController(http.Controller):
                 "Payment %s blocked by sequence chain during bill account update; using SQL force-delete.",
                 payment_id,
             )
-            cr.execute("DELETE FROM account_payment WHERE id = %s", (payment_id,))
-            if payment_move_id:
-                _sql_force_delete_move(payment_move_id)
+            used_sql_fallback = True
+            _sql_force_delete_payment(payment_id, payment_move_id)
+        return used_sql_fallback
 
     def _register_bill_payment(self, bill, pd):
         """Create, post and reconcile an outbound payment for a vendor bill.
@@ -1815,43 +1831,26 @@ class BillReceiveController(http.Controller):
                     return
 
                 move_id = rec.move_id.id if getattr(rec, "move_id", False) else None
-
-                # 1) remove reconcile + delete move (if exists)
-                if move_id:
-                    m = Move.browse(move_id).exists().with_context(
-                        force_delete=True,
-                        check_move_validity=False,
-                    )
-                    if m:
-                        if m.line_ids:
-                            m.line_ids.remove_move_reconcile()
-                        m.unlink()
-                        deleted_payment_moves += 1
-
-                # 2) SQL delete payment row (bypasses unlink validations)
-                request.env.cr.execute("DELETE FROM account_payment WHERE id = %s", (pid,))
-                if request.env.cr.rowcount:
+                used_sql_fallback = self._delete_payment_record(rec)
+                if move_id and not Move.browse(move_id).exists():
+                    deleted_payment_moves += 1
+                if used_sql_fallback and not Payment.browse(pid).exists():
                     sql_deleted_payments += 1
 
             # --- delete payments first ---
             for pid in payment_ids:
                 try:
                     with request.env.cr.savepoint():
-                        # Try normal unlink first (works for healthy payments)
-                        p = Payment.browse(pid).exists().with_context(
-                            force_delete=True,
-                            check_move_validity=False,
-                            skip_account_move_synchronization=True,
-                        )
+                        p = Payment.browse(pid).exists()
                         if not p:
                             continue
-                        p.unlink()
+                        self._delete_payment_record(p)
                     deleted_payments += 1
 
                 except Exception as err:
-                    # If it is the known broken-payment error, fallback to hard-delete
+                    # Fallback for any payment-specific ORM constraint we cannot cleanly bypass.
                     msg = str(err or "")
-                    if "No es posible confirmar un pago" in msg:
+                    if not self._is_db_cursor_closed_error(err):
                         try:
                             with request.env.cr.savepoint():
                                 _hard_delete_payment(pid)

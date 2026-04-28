@@ -44,7 +44,11 @@ class AccountPayment(models.Model):
                         payment.move_id.line_ids.remove_move_reconcile()
                     if payment.state == "posted" and hasattr(payment, "action_draft"):
                         payment.action_draft()
-                    payment.unlink()
+                    payment.with_context(
+                        force_delete=True,
+                        check_move_validity=False,
+                        skip_account_move_synchronization=True,
+                    ).unlink()
                 deleted_count += 1
             except Exception as err:
                 skipped.append("%s (%s)" % (payment.display_name, err))
