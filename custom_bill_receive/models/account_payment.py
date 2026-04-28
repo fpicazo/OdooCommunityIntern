@@ -33,7 +33,7 @@ class AccountPayment(models.Model):
             payment_domain.append(("is_internal_transfer", "=", False))
 
         payments = self.search(payment_domain)
-        payments_to_delete = payments.filtered("_is_unlinked_bill_payment")
+        payments_to_delete = payments.filtered(lambda payment: payment._is_unlinked_bill_payment())
 
         deleted_count = 0
         skipped = []
