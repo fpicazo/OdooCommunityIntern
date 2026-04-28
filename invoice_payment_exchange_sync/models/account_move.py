@@ -19,8 +19,12 @@ class AccountMove(models.Model):
 
     def action_register_mxn_payment(self):
         self.ensure_one()
-        action = super().action_register_payment()
-        action_context = dict(action.get('context', {}))
+        if not self.amount_mxn or self.amount_mxn <= 0:
+            raise UserError(_('Amount MXN must be greater than zero.'))
+        if self.state != 'posted':
+            raise UserError(_('The invoice must be posted before registering the MXN payment.'))
+
+        action_context = dict(self.env.context)
         action_context.update({
             'use_invoice_amount_mxn': True,
             'invoice_amount_mxn': self.amount_mxn,
@@ -30,8 +34,15 @@ class AccountMove(models.Model):
             'active_ids': self.ids,
             'active_id': self.id,
         })
-        action['context'] = action_context
-        return action
+        register = self.env['account.payment.register'].with_context(action_context).create({})
+        if hasattr(register, 'action_create_payments'):
+            register.action_create_payments()
+        else:
+            register._create_payments()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'reload',
+        }
 
     def _sync_invoice_rate_from_amount_mxn(self, payment=None):
         self.ensure_one()
