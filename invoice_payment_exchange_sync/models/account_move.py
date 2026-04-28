@@ -16,6 +16,10 @@ class AccountMove(models.Model):
         help='If filled, Register Payment will use this amount in company currency.',
     )
 
+    def action_register_mxn_payment(self):
+        self.ensure_one()
+        return self.action_register_payment()
+
     def action_register_payment(self):
         action = super().action_register_payment()
 

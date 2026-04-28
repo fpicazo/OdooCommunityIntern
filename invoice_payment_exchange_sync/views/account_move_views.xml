@@ -4,6 +4,13 @@
         <field name="model">account.move</field>
         <field name="inherit_id" ref="account.view_move_form"/>
         <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_register_mxn_payment"
+                        type="object"
+                        string="Register MXN Payment"
+                        class="oe_highlight"
+                        invisible="state != 'posted' or currency_id == payment_company_currency_id or not amount_mxn or payment_state == 'paid'"/>
+            </xpath>
             <xpath expr="//field[@name='invoice_date']" position="after">
                 <field name="amount_mxn"
                        invisible="currency_id == payment_company_currency_id"/>
