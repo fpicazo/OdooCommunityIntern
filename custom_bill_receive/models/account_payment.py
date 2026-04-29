@@ -10,11 +10,14 @@ class AccountPayment(models.Model):
     _inherit = "account.payment"
 
     def _sql_force_delete_selected_payment(self, payment_id=None, move_id=None):
-        self.ensure_one()
         cr = self.env.cr
-        payment_id = payment_id or self.id
+        if payment_id is None:
+            self.ensure_one()
+            payment_id = self.id
         if move_id is None:
-            move_id = self.move_id.id if self.move_id else False
+            cr.execute("SELECT move_id FROM account_payment WHERE id = %s", (payment_id,))
+            row = cr.fetchone()
+            move_id = row[0] if row and row[0] else False
 
         # Some Odoo versions keep a reverse pointer from move to payment.
         try:
@@ -97,15 +100,19 @@ class AccountPayment(models.Model):
                 deleted_count += 1
             except Exception as err:
                 try:
-                    with self.env.cr.savepoint():
-                        if not payment_move_id or payment._is_missing_move_delete_error(err):
-                            self.browse(payment_id)._sql_force_delete_selected_payment(
-                                payment_id=payment_id,
-                                move_id=payment_move_id,
-                            )
-                            deleted_count += 1
-                            continue
+                    if not payment_move_id or payment._is_missing_move_delete_error(err):
+                        self.env.cr.rollback()
+                        self._sql_force_delete_selected_payment(
+                            payment_id=payment_id,
+                            move_id=payment_move_id,
+                        )
+                        deleted_count += 1
+                        continue
                 except Exception as force_err:
+                    try:
+                        self.env.cr.rollback()
+                    except Exception:
+                        pass
                     err = force_err
 
                 _logger.exception(
