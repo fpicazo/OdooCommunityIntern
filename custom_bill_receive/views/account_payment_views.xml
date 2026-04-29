@@ -6,7 +6,7 @@
         <field name="binding_model_id" ref="account.model_account_payment"/>
         <field name="binding_view_types">list,form</field>
         <field name="state">code</field>
-        <field name="code">action = model.action_delete_unlinked_bill_payments()</field>
+        <field name="code">action = records.action_delete_unlinked_bill_payments()</field>
     </record>
 
     <record id="view_account_payment_form_custom_bill_receive_cleanup" model="ir.ui.view">
@@ -19,7 +19,7 @@
                         type="object"
                         string="Delete Unlinked Bill Payments"
                         class="btn-secondary"
-                        confirm="This will delete every vendor bill payment that is not linked to a bill. Continue?"/>
+                        confirm="This will delete only the selected payment if it is an unlinked vendor bill payment. Continue?"/>
             </xpath>
         </field>
     </record>

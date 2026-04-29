@@ -1,4 +1,9 @@
+import logging
+
 from odoo import _, models
+
+
+_logger = logging.getLogger(__name__)
 
 
 class AccountPayment(models.Model):
@@ -26,18 +31,17 @@ class AccountPayment(models.Model):
         )
 
     def action_delete_unlinked_bill_payments(self):
-        payment_domain = [("payment_type", "=", "outbound")]
-        if "partner_type" in self._fields:
-            payment_domain.append(("partner_type", "=", "supplier"))
-        if "is_internal_transfer" in self._fields:
-            payment_domain.append(("is_internal_transfer", "=", False))
-
-        payments = self.search(payment_domain)
-        payments_to_delete = payments.filtered(lambda payment: payment._is_unlinked_bill_payment())
+        payments_to_delete = self.exists()
 
         deleted_count = 0
         skipped = []
         for payment in payments_to_delete:
+            if not payment._is_unlinked_bill_payment():
+                skipped.append(
+                    _("%s (selected payment is still linked to a vendor bill or is not a vendor payment)")
+                    % payment.display_name
+                )
+                continue
             try:
                 with self.env.cr.savepoint():
                     if payment.move_id and payment.move_id.line_ids:
@@ -51,10 +55,16 @@ class AccountPayment(models.Model):
                     ).unlink()
                 deleted_count += 1
             except Exception as err:
+                _logger.exception(
+                    "Failed to delete selected payment %s (%s): %s",
+                    payment.display_name,
+                    payment.id,
+                    err,
+                )
                 skipped.append("%s (%s)" % (payment.display_name, err))
 
         message = _(
-            "Deleted %(deleted)s unlinked bill payments out of %(found)s candidates."
+            "Deleted %(deleted)s selected payment(s) out of %(found)s."
         ) % {
             "deleted": deleted_count,
             "found": len(payments_to_delete),
@@ -66,6 +76,7 @@ class AccountPayment(models.Model):
                 "message": message,
                 "skipped": len(skipped),
             }
+            message = "%s\n%s" % (message, "\n".join(skipped[:3]))
 
         return {
             "type": "ir.actions.client",
