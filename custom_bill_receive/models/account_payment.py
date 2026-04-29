@@ -148,6 +148,37 @@ class AccountPayment(models.Model):
             lambda move: move.move_type in ("in_invoice", "in_refund")
         )
 
+    def action_delete_all_unlinked_bill_payments(self):
+        """Search all unlinked outbound vendor bill payments and delete them."""
+        domain = [('payment_type', '=', 'outbound')]
+        if 'partner_type' in self._fields:
+            domain.append(('partner_type', '=', 'supplier'))
+        if 'is_internal_transfer' in self._fields:
+            domain.append(('is_internal_transfer', '=', False))
+
+        candidates = self.env['account.payment'].sudo().search(domain)
+        unlinked = candidates.filtered(lambda p: p._is_unlinked_bill_payment())
+
+        _logger.info(
+            "action_delete_all_unlinked_bill_payments: found %s candidates, %s unlinked",
+            len(candidates),
+            len(unlinked),
+        )
+
+        if not unlinked:
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': _('Bill Payments Cleanup'),
+                    'message': _('No unlinked vendor bill payments found.'),
+                    'type': 'info',
+                    'sticky': False,
+                },
+            }
+
+        return unlinked.action_delete_unlinked_bill_payments()
+
     def action_delete_unlinked_bill_payments(self):
         payments_to_delete = self.exists()
 
