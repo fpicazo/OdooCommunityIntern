@@ -92,11 +92,18 @@ class AccountPayment(models.Model):
             row = cr.fetchone()
             move_id = row[0] if row and row[0] else False
 
-        # Some Odoo versions keep a reverse pointer from move to payment.
-        try:
-            cr.execute("UPDATE account_move SET payment_id = NULL WHERE payment_id = %s", (payment_id,))
-        except Exception:
-            pass
+        # Clear FK references that might block deletion.
+        # Wrap each in a savepoint so a failure rolls back cleanly and does
+        # NOT leave the transaction in an aborted state.
+        for _nullable_sql in [
+            "UPDATE account_move SET payment_id = NULL WHERE payment_id = %s",
+            "UPDATE account_bank_statement_line SET payment_id = NULL WHERE payment_id = %s",
+        ]:
+            try:
+                with cr.savepoint():
+                    cr.execute(_nullable_sql, (payment_id,))
+            except Exception:
+                pass
 
         cr.execute("DELETE FROM account_payment WHERE id = %s", (payment_id,))
         if move_id:
@@ -231,44 +238,30 @@ class AccountPayment(models.Model):
                     payment_state,
                     debug_info,
                 )
+                # Always attempt a direct SQL delete as fallback.
+                # Use a savepoint so a failure here does not abort the
+                # main transaction and roll back previously deleted payments.
                 try:
-                    if not payment_move_id or self._is_missing_move_delete_error(err) or self._is_transaction_aborted_error(err):
-                        _logger.warning(
-                            "Delete fallback for %s (%s): rolling back transaction before SQL force delete",
-                            payment_name,
-                            payment_id,
-                        )
-                        self.env.cr.rollback()
-                        fallback_debug = self._collect_delete_debug_info(payment_id, payment_move_id)
-                        _logger.info(
-                            "Delete fallback probe for %s (%s): debug=%s",
-                            payment_name,
-                            payment_id,
-                            fallback_debug,
-                        )
+                    with self.env.cr.savepoint():
                         self._sql_force_delete_selected_payment(
                             payment_id=payment_id,
                             move_id=payment_move_id,
                         )
-                        _logger.info(
-                            "Delete fallback completed for %s (%s)",
-                            payment_name,
-                            payment_id,
-                        )
-                        deleted_count += 1
-                        continue
+                    _logger.info(
+                        "Delete fallback completed for %s (%s)",
+                        payment_name,
+                        payment_id,
+                    )
+                    deleted_count += 1
+                    continue
                 except Exception as force_err:
-                    try:
-                        self.env.cr.rollback()
-                    except Exception:
-                        pass
                     _logger.exception(
-                        "Delete fallback failed for %s (%s). initial_error=%s",
+                        "Delete fallback failed for %s (%s). initial_error=%s force_error=%s",
                         payment_name,
                         payment_id,
                         err,
+                        force_err,
                     )
-                    err = force_err
 
                 _logger.exception(
                     "Failed to delete selected payment %s (%s): %s",
