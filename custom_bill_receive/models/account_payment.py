@@ -86,6 +86,5 @@ class AccountPayment(models.Model):
                 "message": message,
                 "type": "warning" if skipped else "success",
                 "sticky": bool(skipped),
-                "next": {"type": "ir.actions.client", "tag": "reload"},
             },
         }
