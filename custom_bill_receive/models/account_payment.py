@@ -88,9 +88,16 @@ class AccountPayment(models.Model):
             self.ensure_one()
             payment_id = self.id
         if move_id is None:
-            cr.execute("SELECT move_id FROM account_payment WHERE id = %s", (payment_id,))
+            cr.execute("SELECT move_id FROM account_payment WHERE id = %s FOR UPDATE", (payment_id,))
             row = cr.fetchone()
             move_id = row[0] if row and row[0] else False
+        else:
+            # Acquire exclusive lock on the payment row to avoid concurrent-update errors.
+            cr.execute("SELECT id FROM account_payment WHERE id = %s FOR UPDATE", (payment_id,))
+
+        # Acquire exclusive lock on the move row before touching it.
+        if move_id:
+            cr.execute("SELECT id FROM account_move WHERE id = %s FOR UPDATE", (move_id,))
 
         # Clear FK references that might block deletion.
         # Wrap each in a savepoint so a failure rolls back cleanly and does
