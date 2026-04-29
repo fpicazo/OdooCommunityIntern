@@ -9,18 +9,20 @@ _logger = logging.getLogger(__name__)
 class AccountPayment(models.Model):
     _inherit = "account.payment"
 
-    def _sql_force_delete_selected_payment(self):
+    def _sql_force_delete_selected_payment(self, payment_id=None, move_id=None):
         self.ensure_one()
         cr = self.env.cr
-        move_id = self.move_id.id if self.move_id else False
+        payment_id = payment_id or self.id
+        if move_id is None:
+            move_id = self.move_id.id if self.move_id else False
 
         # Some Odoo versions keep a reverse pointer from move to payment.
         try:
-            cr.execute("UPDATE account_move SET payment_id = NULL WHERE payment_id = %s", (self.id,))
+            cr.execute("UPDATE account_move SET payment_id = NULL WHERE payment_id = %s", (payment_id,))
         except Exception:
             pass
 
-        cr.execute("DELETE FROM account_payment WHERE id = %s", (self.id,))
+        cr.execute("DELETE FROM account_payment WHERE id = %s", (payment_id,))
         if move_id:
             cr.execute(
                 "DELETE FROM account_partial_reconcile "
@@ -65,21 +67,27 @@ class AccountPayment(models.Model):
         deleted_count = 0
         skipped = []
         for payment in payments_to_delete:
+            payment_id = payment.id
+            payment_name = payment.display_name
+            payment_move = payment.move_id
+            payment_move_id = payment_move.id if payment_move else False
+            payment_state = payment.state
+
             if not payment._is_unlinked_bill_payment():
                 skipped.append(
                     _("%s (selected payment is still linked to a vendor bill or is not a vendor payment)")
-                    % payment.display_name
+                    % payment_name
                 )
                 continue
             try:
                 with self.env.cr.savepoint():
-                    if payment.move_id and payment.move_id.line_ids:
-                        payment.move_id.line_ids.remove_move_reconcile()
-                    if payment.state == "posted" and not payment.move_id:
-                        payment._sql_force_delete_selected_payment()
+                    if payment_move and payment_move.line_ids:
+                        payment_move.line_ids.remove_move_reconcile()
+                    if payment_state == "posted" and not payment_move_id:
+                        payment._sql_force_delete_selected_payment(payment_id=payment_id, move_id=False)
                         deleted_count += 1
                         continue
-                    if payment.state == "posted" and hasattr(payment, "action_draft"):
+                    if payment_state == "posted" and hasattr(payment, "action_draft"):
                         payment.action_draft()
                     payment.with_context(
                         force_delete=True,
@@ -90,8 +98,11 @@ class AccountPayment(models.Model):
             except Exception as err:
                 try:
                     with self.env.cr.savepoint():
-                        if not payment.move_id or payment._is_missing_move_delete_error(err):
-                            payment._sql_force_delete_selected_payment()
+                        if not payment_move_id or payment._is_missing_move_delete_error(err):
+                            self.browse(payment_id)._sql_force_delete_selected_payment(
+                                payment_id=payment_id,
+                                move_id=payment_move_id,
+                            )
                             deleted_count += 1
                             continue
                 except Exception as force_err:
@@ -99,11 +110,11 @@ class AccountPayment(models.Model):
 
                 _logger.exception(
                     "Failed to delete selected payment %s (%s): %s",
-                    payment.display_name,
-                    payment.id,
+                    payment_name,
+                    payment_id,
                     err,
                 )
-                skipped.append("%s (%s)" % (payment.display_name, err))
+                skipped.append("%s (%s)" % (payment_name, err))
 
         message = _(
             "Deleted %(deleted)s selected payment(s) out of %(found)s."
