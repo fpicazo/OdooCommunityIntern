@@ -9,6 +9,43 @@ _logger = logging.getLogger(__name__)
 class AccountPayment(models.Model):
     _inherit = "account.payment"
 
+    def _collect_delete_debug_info(self, payment_id, move_id=None):
+        cr = self.env.cr
+        debug = {
+            "payment_id": payment_id,
+            "move_id": move_id or False,
+        }
+
+        try:
+            cr.execute(
+                "SELECT id, move_id, state, payment_type FROM account_payment WHERE id = %s",
+                (payment_id,),
+            )
+            row = cr.fetchone()
+            debug["payment_row"] = row or False
+        except Exception as err:
+            debug["payment_row_error"] = str(err)
+
+        resolved_move_id = move_id
+        if resolved_move_id is None and debug.get("payment_row"):
+            resolved_move_id = debug["payment_row"][1]
+            debug["move_id"] = resolved_move_id or False
+
+        if resolved_move_id:
+            try:
+                cr.execute("SELECT id, state, name, payment_id FROM account_move WHERE id = %s", (resolved_move_id,))
+                debug["move_row"] = cr.fetchone() or False
+            except Exception as err:
+                debug["move_row_error"] = str(err)
+
+            try:
+                cr.execute("SELECT COUNT(*) FROM account_move_line WHERE move_id = %s", (resolved_move_id,))
+                debug["move_line_count"] = cr.fetchone()[0]
+            except Exception as err:
+                debug["move_line_count_error"] = str(err)
+
+        return debug
+
     def _sql_force_delete_selected_payment(self, payment_id=None, move_id=None):
         cr = self.env.cr
         if payment_id is None:
@@ -75,8 +112,22 @@ class AccountPayment(models.Model):
             payment_move = payment.move_id
             payment_move_id = payment_move.id if payment_move else False
             payment_state = payment.state
+            debug_info = self._collect_delete_debug_info(payment_id, payment_move_id)
+
+            _logger.info(
+                "Starting selected payment delete for %s (%s). debug=%s",
+                payment_name,
+                payment_id,
+                debug_info,
+            )
 
             if not payment._is_unlinked_bill_payment():
+                _logger.warning(
+                    "Skipping selected payment delete for %s (%s) because it is still linked or not a vendor payment. debug=%s",
+                    payment_name,
+                    payment_id,
+                    debug_info,
+                )
                 skipped.append(
                     _("%s (selected payment is still linked to a vendor bill or is not a vendor payment)")
                     % payment_name
@@ -84,27 +135,86 @@ class AccountPayment(models.Model):
                 continue
             try:
                 with self.env.cr.savepoint():
+                    _logger.info(
+                        "Delete step 1 for %s (%s): entered savepoint. move_id=%s state=%s",
+                        payment_name,
+                        payment_id,
+                        payment_move_id,
+                        payment_state,
+                    )
                     if payment_move and payment_move.line_ids:
+                        _logger.info(
+                            "Delete step 2 for %s (%s): removing reconciliations from move %s",
+                            payment_name,
+                            payment_id,
+                            payment_move_id,
+                        )
                         payment_move.line_ids.remove_move_reconcile()
                     if payment_state == "posted" and not payment_move_id:
+                        _logger.warning(
+                            "Delete step 3 for %s (%s): posted payment without move, forcing SQL delete. debug=%s",
+                            payment_name,
+                            payment_id,
+                            debug_info,
+                        )
                         payment._sql_force_delete_selected_payment(payment_id=payment_id, move_id=False)
                         deleted_count += 1
                         continue
                     if payment_state == "posted" and hasattr(payment, "action_draft"):
+                        _logger.info(
+                            "Delete step 4 for %s (%s): moving payment to draft",
+                            payment_name,
+                            payment_id,
+                        )
                         payment.action_draft()
+                    _logger.info(
+                        "Delete step 5 for %s (%s): unlink with forced context",
+                        payment_name,
+                        payment_id,
+                    )
                     payment.with_context(
                         force_delete=True,
                         check_move_validity=False,
                         skip_account_move_synchronization=True,
                     ).unlink()
+                    _logger.info(
+                        "Delete step 6 for %s (%s): ORM unlink completed",
+                        payment_name,
+                        payment_id,
+                    )
                 deleted_count += 1
             except Exception as err:
+                _logger.exception(
+                    "Delete primary path failed for %s (%s). move_id=%s state=%s debug=%s",
+                    payment_name,
+                    payment_id,
+                    payment_move_id,
+                    payment_state,
+                    debug_info,
+                )
                 try:
                     if not payment_move_id or payment._is_missing_move_delete_error(err):
+                        _logger.warning(
+                            "Delete fallback for %s (%s): rolling back transaction before SQL force delete",
+                            payment_name,
+                            payment_id,
+                        )
                         self.env.cr.rollback()
+                        fallback_debug = self._collect_delete_debug_info(payment_id, payment_move_id)
+                        _logger.info(
+                            "Delete fallback probe for %s (%s): debug=%s",
+                            payment_name,
+                            payment_id,
+                            fallback_debug,
+                        )
                         self._sql_force_delete_selected_payment(
                             payment_id=payment_id,
                             move_id=payment_move_id,
+                        )
+                        _logger.info(
+                            "Delete fallback completed for %s (%s)",
+                            payment_name,
+                            payment_id,
                         )
                         deleted_count += 1
                         continue
@@ -113,6 +223,12 @@ class AccountPayment(models.Model):
                         self.env.cr.rollback()
                     except Exception:
                         pass
+                    _logger.exception(
+                        "Delete fallback failed for %s (%s). initial_error=%s",
+                        payment_name,
+                        payment_id,
+                        err,
+                    )
                     err = force_err
 
                 _logger.exception(
