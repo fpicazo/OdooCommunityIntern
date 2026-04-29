@@ -9,19 +9,24 @@ _logger = logging.getLogger(__name__)
 class AccountPayment(models.Model):
     _inherit = "account.payment"
 
-    def _collect_delete_debug_info(self, payment_id, move_id=None):
+    def _run_debug_query(self, query, params=()):
         cr = self.env.cr
+        with cr.savepoint():
+            cr.execute(query, params)
+            return cr.fetchall()
+
+    def _collect_delete_debug_info(self, payment_id, move_id=None):
         debug = {
             "payment_id": payment_id,
             "move_id": move_id or False,
         }
 
         try:
-            cr.execute(
+            rows = self._run_debug_query(
                 "SELECT id, move_id, state, payment_type FROM account_payment WHERE id = %s",
                 (payment_id,),
             )
-            row = cr.fetchone()
+            row = rows[0] if rows else False
             debug["payment_row"] = row or False
         except Exception as err:
             debug["payment_row_error"] = str(err)
@@ -33,19 +38,25 @@ class AccountPayment(models.Model):
 
         if resolved_move_id:
             try:
-                cr.execute("SELECT id, state, name, payment_id FROM account_move WHERE id = %s", (resolved_move_id,))
-                debug["move_row"] = cr.fetchone() or False
+                rows = self._run_debug_query(
+                    "SELECT id, state, name FROM account_move WHERE id = %s",
+                    (resolved_move_id,),
+                )
+                debug["move_row"] = rows[0] if rows else False
             except Exception as err:
                 debug["move_row_error"] = str(err)
 
             try:
-                cr.execute("SELECT COUNT(*) FROM account_move_line WHERE move_id = %s", (resolved_move_id,))
-                debug["move_line_count"] = cr.fetchone()[0]
+                rows = self._run_debug_query(
+                    "SELECT COUNT(*) FROM account_move_line WHERE move_id = %s",
+                    (resolved_move_id,),
+                )
+                debug["move_line_count"] = rows[0][0] if rows else 0
             except Exception as err:
                 debug["move_line_count_error"] = str(err)
 
             try:
-                cr.execute(
+                rows = self._run_debug_query(
                     """
                     SELECT COUNT(DISTINCT move.id)
                     FROM account_move_line payment_line
@@ -65,7 +76,7 @@ class AccountPayment(models.Model):
                     """,
                     (resolved_move_id,),
                 )
-                debug["linked_vendor_bill_count"] = cr.fetchone()[0]
+                debug["linked_vendor_bill_count"] = rows[0][0] if rows else 0
             except Exception as err:
                 debug["linked_vendor_bill_count_error"] = str(err)
 
@@ -135,13 +146,12 @@ class AccountPayment(models.Model):
             payment_id = payment.id
             debug_info = self._collect_delete_debug_info(payment_id)
             payment_row = debug_info.get("payment_row") or ()
-            payment_name = payment_row[0] if len(payment_row) > 0 and payment_row[0] else payment.display_name
+            payment_name = payment.display_name
             payment_move_id = payment_row[1] if len(payment_row) > 1 and payment_row[1] else False
             payment_state = payment_row[2] if len(payment_row) > 2 else False
-            payment_move = (
-                self.env["account.move"].sudo().browse(payment_move_id).exists()
-                if payment_move_id else self.env["account.move"].sudo().browse()
-            )
+            move_row = debug_info.get("move_row") or ()
+            move_exists = bool(move_row)
+            payment_move = self.env["account.move"].sudo().browse(payment_move_id) if payment_move_id and move_exists else self.env["account.move"].sudo().browse()
 
             _logger.info(
                 "Starting selected payment delete for %s (%s). debug=%s",
