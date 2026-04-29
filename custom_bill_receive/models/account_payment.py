@@ -116,6 +116,10 @@ class AccountPayment(models.Model):
             and "si no tiene un asiento contable" in message
         )
 
+    def _is_transaction_aborted_error(self, error):
+        message = str(error or "").lower()
+        return "current transaction is aborted" in message
+
     def _get_invoice_related_documents(self):
         self.ensure_one()
         payment_lines = self.move_id.line_ids
@@ -228,7 +232,7 @@ class AccountPayment(models.Model):
                     debug_info,
                 )
                 try:
-                    if not payment_move_id or self._is_missing_move_delete_error(err):
+                    if not payment_move_id or self._is_missing_move_delete_error(err) or self._is_transaction_aborted_error(err):
                         _logger.warning(
                             "Delete fallback for %s (%s): rolling back transaction before SQL force delete",
                             payment_name,
