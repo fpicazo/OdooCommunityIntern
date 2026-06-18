@@ -128,7 +128,7 @@
         </field>
     </record>
 
-    <record id="action_matchconta_iva_utility_report" model="ir.actions.server">
+    <record id="action_matchconta_iva_utility_report_server" model="ir.actions.server">
         <field name="name">IVA Utility Report</field>
         <field name="model_id" ref="model_matchconta_iva_utility_report_wizard"/>
         <field name="state">code</field>
@@ -147,7 +147,7 @@
         id="menu_matchconta_iva_utility_report"
         name="IVA Utility Report"
         parent="menu_matchconta_root"
-        action="action_matchconta_iva_utility_report"
+        action="action_matchconta_iva_utility_report_server"
         sequence="10"
     />
     <menuitem
