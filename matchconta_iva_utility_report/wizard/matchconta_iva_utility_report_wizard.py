@@ -487,6 +487,54 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         store=True,
         readonly=True,
     )
+    declared_ingreso = fields.Monetary(
+        string="Declared Income",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_egreso = fields.Monetary(
+        string="Declared Expense",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_isr = fields.Monetary(
+        string="Declared ISR",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_iva_cobrado = fields.Monetary(
+        string="Declared IVA Collected",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_iva_pagado = fields.Monetary(
+        string="Declared IVA Paid",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_iva_pagable = fields.Monetary(
+        string="Declared IVA Payable",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_nomina = fields.Monetary(
+        string="Declared Payroll",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    declared_isr_nomina_pagado = fields.Monetary(
+        string="Declared Payroll ISR Paid",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
 
     @api.depends(
         "customer_iva",
@@ -518,6 +566,48 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
                 line.transaction_type = "income"
             else:
                 line.transaction_type = "expense"
+
+    @api.depends("report_company_id", "report_month", "report_year")
+    def _compute_declared_amounts(self):
+        key_by_line = {}
+        company_ids = set()
+        years = set()
+        months = set()
+
+        for line in self:
+            if not line.report_company_id or not line.report_month or not line.report_year:
+                continue
+            month_key = str(line.report_month).zfill(2)
+            key = (line.report_company_id.id, month_key, line.report_year)
+            key_by_line[line.id] = key
+            company_ids.add(line.report_company_id.id)
+            years.add(line.report_year)
+            months.add(month_key)
+
+        declared_map = {}
+        if company_ids and years and months:
+            declared_records = self.env["matchconta.declared.amounts"].search(
+                [
+                    ("company_id", "in", list(company_ids)),
+                    ("year", "in", list(years)),
+                    ("month", "in", list(months)),
+                ]
+            )
+            declared_map = {
+                (rec.company_id.id, rec.month, rec.year): rec
+                for rec in declared_records
+            }
+
+        for line in self:
+            declared = declared_map.get(key_by_line.get(line.id))
+            line.declared_ingreso = declared.ingreso_declarado if declared else 0.0
+            line.declared_egreso = declared.egreso_declarado if declared else 0.0
+            line.declared_isr = declared.isr_declarado if declared else 0.0
+            line.declared_iva_cobrado = declared.iva_cobrado_declarado if declared else 0.0
+            line.declared_iva_pagado = declared.iva_pagado if declared else 0.0
+            line.declared_iva_pagable = declared.iva_pagable_declarado if declared else 0.0
+            line.declared_nomina = declared.nomina_declarado if declared else 0.0
+            line.declared_isr_nomina_pagado = declared.isr_nomina_pagado if declared else 0.0
 
 
 class MatchContaIvaUtilityReportDebug(models.TransientModel):

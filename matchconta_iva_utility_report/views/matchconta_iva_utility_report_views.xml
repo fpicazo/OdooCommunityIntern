@@ -69,6 +69,14 @@
                 <field name="supplier_iva" sum="Total"/>
                 <field name="iva_difference" sum="Total"/>
                 <field name="utility" sum="Total"/>
+                <field name="declared_ingreso" optional="show"/>
+                <field name="declared_egreso" optional="show"/>
+                <field name="declared_isr" optional="show"/>
+                <field name="declared_iva_cobrado" optional="show"/>
+                <field name="declared_iva_pagado" optional="show"/>
+                <field name="declared_iva_pagable" optional="show"/>
+                <field name="declared_nomina" optional="show"/>
+                <field name="declared_isr_nomina_pagado" optional="show"/>
             </list>
         </field>
     </record>
@@ -124,6 +132,14 @@
                             <field name="supplier_iva"/>
                             <field name="iva_difference"/>
                             <field name="utility"/>
+                            <field name="declared_ingreso"/>
+                            <field name="declared_egreso"/>
+                            <field name="declared_isr"/>
+                            <field name="declared_iva_cobrado"/>
+                            <field name="declared_iva_pagado"/>
+                            <field name="declared_iva_pagable"/>
+                            <field name="declared_nomina"/>
+                            <field name="declared_isr_nomina_pagado"/>
                         </group>
                     </group>
                 </sheet>
