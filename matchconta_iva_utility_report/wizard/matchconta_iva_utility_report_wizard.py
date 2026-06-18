@@ -126,6 +126,22 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             "target": "current",
         }
 
+    def _open_debug_popup(self, debug_lines):
+        debug_wizard = self.env["matchconta.iva.utility.report.debug"].create(
+            {
+                "wizard_id": self.id,
+                "message": "\n".join(debug_lines),
+            }
+        )
+        return {
+            "type": "ir.actions.act_window",
+            "name": "IVA Utility Report Debug",
+            "res_model": "matchconta.iva.utility.report.debug",
+            "view_mode": "form",
+            "res_id": debug_wizard.id,
+            "target": "new",
+        }
+
     @api.model
     def action_open_current_report(self):
         wizard = self.create({})
@@ -184,6 +200,17 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
 
         self.line_ids.unlink()
 
+        debug_lines = [
+            f"Company: {self.company_id.display_name}",
+            f"Period: {date_from} to {date_to}",
+            "Payment domain:",
+            "- company_id = selected company",
+            "- date within selected period",
+            "- move_id.state = posted",
+            "- payment.state = posted",
+            "",
+        ]
+
         payments = self.env["account.payment"].search(
             [
                 ("company_id", "=", self.company_id.id),
@@ -195,11 +222,23 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             order="date, id",
         )
 
+        debug_lines.append(f"Payments found: {len(payments)}")
+        if payments:
+            sample_payments = ", ".join(payments[:10].mapped("display_name"))
+            debug_lines.append(f"Sample payments: {sample_payments}")
+        else:
+            debug_lines.append("No payments matched the search domain.")
+
         line_commands = []
         currency = self.company_id.currency_id
+        reconciled_document_count = 0
+        lines_created = 0
+        skipped_without_documents = 0
+        skipped_zero_totals = 0
 
         for payment in payments:
             documents = self._get_reconciled_documents(payment)
+            reconciled_document_count += len(documents)
             sale_documents = [
                 document
                 for document in documents
@@ -210,6 +249,10 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 for document in documents
                 if document["move"].is_purchase_document(include_receipts=True)
             ]
+
+            if not documents:
+                skipped_without_documents += 1
+                continue
 
             customer_payment = currency.round(
                 sum(document["payment_amount"] for document in sale_documents)
@@ -230,6 +273,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 and currency.is_zero(customer_iva)
                 and currency.is_zero(supplier_iva)
             ):
+                skipped_zero_totals += 1
                 continue
 
             invoice_names = ", ".join(
@@ -259,11 +303,37 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                     },
                 )
             )
+            lines_created += 1
 
         if line_commands:
             self.write({"line_ids": line_commands})
+            return self._get_report_lines_action()
 
-        return self._get_report_lines_action()
+        debug_lines.extend(
+            [
+                f"Reconciled documents found: {reconciled_document_count}",
+                f"Report lines created: {lines_created}",
+                f"Payments skipped without reconciled documents: {skipped_without_documents}",
+                f"Payments skipped because computed totals were zero: {skipped_zero_totals}",
+            ]
+        )
+        if payments:
+            first_payment = payments[0]
+            first_documents = self._get_reconciled_documents(first_payment)
+            debug_lines.append("")
+            debug_lines.append(f"First payment checked: {first_payment.display_name}")
+            debug_lines.append(
+                f"Documents linked to first payment: {len(first_documents)}"
+            )
+            if first_documents:
+                debug_lines.extend(
+                    [
+                        f"- {document['move'].name or document['move'].id}: {document['move'].move_type}, paid={document['payment_amount']}, iva={document['iva_amount']}"
+                        for document in first_documents[:10]
+                    ]
+                )
+
+        return self._open_debug_popup(debug_lines)
 
 
 class MatchContaIvaUtilityReportLine(models.TransientModel):
@@ -343,3 +413,15 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         for line in self:
             line.iva_difference = line.customer_iva - line.supplier_iva
             line.utility = line.customer_payment - line.supplier_payment
+
+
+class MatchContaIvaUtilityReportDebug(models.TransientModel):
+    _name = "matchconta.iva.utility.report.debug"
+    _description = "MatchConta IVA Utility Report Debug"
+
+    wizard_id = fields.Many2one(
+        "matchconta.iva.utility.report.wizard",
+        required=True,
+        ondelete="cascade",
+    )
+    message = fields.Text(readonly=True)

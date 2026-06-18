@@ -1,3 +1,4 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_matchconta_iva_utility_report_wizard,access.matchconta.iva.utility.report.wizard,model_matchconta_iva_utility_report_wizard,account.group_account_user,1,1,1,1
 access_matchconta_iva_utility_report_line,access.matchconta.iva.utility.report.line,model_matchconta_iva_utility_report_line,account.group_account_user,1,1,1,1
+access_matchconta_iva_utility_report_debug,access.matchconta.iva.utility.report.debug,model_matchconta_iva_utility_report_debug,account.group_account_user,1,1,1,1
