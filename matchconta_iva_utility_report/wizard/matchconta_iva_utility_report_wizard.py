@@ -207,7 +207,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             "- company_id = selected company",
             "- date within selected period",
             "- move_id.state = posted",
-            "- payment.state = posted",
+            "- payment.state in paid, posted, in_process",
             "",
         ]
 
@@ -222,16 +222,16 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         ])
         payments_same_company_posted = Payment.search([
             ("company_id", "=", self.company_id.id),
-            ("state", "=", "posted"),
+            ("state", "in", ("paid", "posted", "in_process")),
         ])
         payments_same_period_any_company = Payment.search([
             ("date", ">=", date_from),
             ("date", "<=", date_to),
-            ("state", "=", "posted"),
+            ("state", "in", ("paid", "posted", "in_process")),
         ])
         payments_with_posted_moves = Payment.search([
             ("move_id.state", "=", "posted"),
-            ("state", "=", "posted"),
+            ("state", "in", ("paid", "posted", "in_process")),
         ])
 
         debug_lines.extend(
@@ -280,7 +280,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 ("date", ">=", date_from),
                 ("date", "<=", date_to),
                 ("move_id.state", "=", "posted"),
-                ("state", "=", "posted"),
+                ("state", "in", ("paid", "posted", "in_process")),
             ],
             order="date, id",
         )
