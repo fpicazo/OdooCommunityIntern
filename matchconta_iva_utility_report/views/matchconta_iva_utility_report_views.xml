@@ -9,7 +9,7 @@
                     <button
                         name="action_generate_report"
                         type="object"
-                        string="Generate Table"
+                        string="Generate Report"
                         class="btn-primary"
                     />
                 </header>
@@ -22,35 +22,27 @@
                         </group>
                         <group>
                             <field name="currency_id" invisible="1"/>
-                            <field name="total_paid_amount" readonly="1"/>
-                            <field name="total_taxable_base_16" readonly="1"/>
-                            <field name="total_iva_16" readonly="1"/>
-                            <field name="total_taxable_base_8" readonly="1"/>
-                            <field name="total_iva_8" readonly="1"/>
-                            <field name="total_exempt_amount" readonly="1"/>
-                            <field name="total_other_taxable_base" readonly="1"/>
-                            <field name="total_other_iva" readonly="1"/>
-                            <field name="total_iva_amount" readonly="1"/>
+                            <field name="total_customer_payment" readonly="1"/>
+                            <field name="total_customer_iva" readonly="1"/>
+                            <field name="total_supplier_payment" readonly="1"/>
+                            <field name="total_supplier_iva" readonly="1"/>
+                            <field name="total_iva_difference" readonly="1"/>
+                            <field name="total_utility" readonly="1"/>
                         </group>
                     </group>
                     <field name="line_ids" nolabel="1" readonly="1">
                         <list create="0" delete="0">
-                            <field name="partner_id"/>
-                            <field name="third_party_type"/>
-                            <field name="operation_type"/>
-                            <field name="rfc"/>
-                            <field name="country_code"/>
-                            <field name="document_names" optional="show"/>
-                            <field name="payment_references" optional="hide"/>
-                            <field name="paid_amount" sum="Total"/>
-                            <field name="taxable_base_16" sum="Total"/>
-                            <field name="iva_16" sum="Total"/>
-                            <field name="taxable_base_8" sum="Total"/>
-                            <field name="iva_8" sum="Total"/>
-                            <field name="exempt_amount" sum="Total"/>
-                            <field name="other_taxable_base" sum="Total"/>
-                            <field name="other_iva" sum="Total"/>
-                            <field name="total_iva" sum="Total"/>
+                            <field name="date"/>
+                            <field name="payment_id" optional="show"/>
+                            <field name="partner_id" optional="show"/>
+                            <field name="payment_reference"/>
+                            <field name="invoice_names" optional="show"/>
+                            <field name="customer_payment" sum="Total"/>
+                            <field name="customer_iva" sum="Total"/>
+                            <field name="supplier_payment" sum="Total"/>
+                            <field name="supplier_iva" sum="Total"/>
+                            <field name="iva_difference" sum="Total"/>
+                            <field name="utility" sum="Total"/>
                         </list>
                     </field>
                 </sheet>
@@ -58,8 +50,93 @@
         </field>
     </record>
 
-    <record id="action_matchconta_iva_utility_report" model="ir.actions.act_window">
+    <record id="view_matchconta_iva_utility_report_line_list" model="ir.ui.view">
+        <field name="name">matchconta.iva.utility.report.line.list</field>
+        <field name="model">matchconta.iva.utility.report.line</field>
+        <field name="arch" type="xml">
+            <list create="0" delete="0" edit="0">
+                <field name="date"/>
+                <field name="report_company_id" optional="show"/>
+                <field name="report_month" optional="show"/>
+                <field name="report_year" optional="show"/>
+                <field name="payment_id" optional="show"/>
+                <field name="partner_id"/>
+                <field name="payment_reference"/>
+                <field name="invoice_names" optional="show"/>
+                <field name="customer_payment" sum="Total"/>
+                <field name="customer_iva" sum="Total"/>
+                <field name="supplier_payment" sum="Total"/>
+                <field name="supplier_iva" sum="Total"/>
+                <field name="iva_difference" sum="Total"/>
+                <field name="utility" sum="Total"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_matchconta_iva_utility_report_line_search" model="ir.ui.view">
+        <field name="name">matchconta.iva.utility.report.line.search</field>
+        <field name="model">matchconta.iva.utility.report.line</field>
+        <field name="arch" type="xml">
+            <search string="IVA Utility Report">
+                <field name="partner_id"/>
+                <field name="payment_id"/>
+                <field name="payment_reference"/>
+                <field name="invoice_names"/>
+                <field name="report_company_id"/>
+                <field name="report_month"/>
+                <field name="report_year"/>
+                <filter name="with_customer" string="With Customer" domain="[('customer_payment', '!=', 0)]"/>
+                <filter name="with_supplier" string="With Supplier" domain="[('supplier_payment', '!=', 0)]"/>
+                <filter name="current_year" string="Current Year" domain="[('report_year', '=', context_today().year)]"/>
+                <separator/>
+                <filter name="group_by_partner" string="Partner" context="{'group_by': 'partner_id'}"/>
+                <filter name="group_by_date" string="Date" context="{'group_by': 'date'}"/>
+                <filter name="group_by_company" string="Company" context="{'group_by': 'report_company_id'}"/>
+                <filter name="group_by_month" string="Month" context="{'group_by': 'report_month'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_matchconta_iva_utility_report_line_form" model="ir.ui.view">
+        <field name="name">matchconta.iva.utility.report.line.form</field>
+        <field name="model">matchconta.iva.utility.report.line</field>
+        <field name="arch" type="xml">
+            <form string="IVA Utility Report Line" create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="date"/>
+                            <field name="payment_id"/>
+                            <field name="partner_id"/>
+                            <field name="payment_reference"/>
+                            <field name="invoice_names"/>
+                        </group>
+                        <group>
+                            <field name="report_company_id"/>
+                            <field name="report_month"/>
+                            <field name="report_year"/>
+                            <field name="customer_payment"/>
+                            <field name="customer_iva"/>
+                            <field name="supplier_payment"/>
+                            <field name="supplier_iva"/>
+                            <field name="iva_difference"/>
+                            <field name="utility"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_matchconta_iva_utility_report" model="ir.actions.server">
         <field name="name">IVA Utility Report</field>
+        <field name="model_id" ref="model_matchconta_iva_utility_report_wizard"/>
+        <field name="state">code</field>
+        <field name="code">action = model.action_open_current_report()</field>
+    </record>
+
+    <record id="action_matchconta_iva_utility_report_wizard" model="ir.actions.act_window">
+        <field name="name">Generate IVA Utility Report</field>
         <field name="res_model">matchconta.iva.utility.report.wizard</field>
         <field name="view_mode">form</field>
         <field name="target">current</field>
@@ -72,5 +149,12 @@
         parent="menu_matchconta_root"
         action="action_matchconta_iva_utility_report"
         sequence="10"
+    />
+    <menuitem
+        id="menu_matchconta_iva_utility_report_generate"
+        name="Generate Report"
+        parent="menu_matchconta_root"
+        action="action_matchconta_iva_utility_report_wizard"
+        sequence="20"
     />
 </odoo>
