@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_matchconta_iva_utility_report_wizard_form" model="ir.ui.view">
+        <field name="name">matchconta.iva.utility.report.wizard.form</field>
+        <field name="model">matchconta.iva.utility.report.wizard</field>
+        <field name="arch" type="xml">
+            <form string="IVA Utility Report">
+                <header>
+                    <button
+                        name="action_generate_report"
+                        type="object"
+                        string="Generate Report"
+                        class="btn-primary"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="company_id"/>
+                            <field name="month"/>
+                            <field name="year"/>
+                        </group>
+                        <group>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="total_customer_payment" readonly="1"/>
+                            <field name="total_customer_iva" readonly="1"/>
+                            <field name="total_supplier_payment" readonly="1"/>
+                            <field name="total_supplier_iva" readonly="1"/>
+                            <field name="total_iva_difference" readonly="1"/>
+                            <field name="total_utility" readonly="1"/>
+                        </group>
+                    </group>
+                    <field name="line_ids" nolabel="1" readonly="1">
+                        <list create="0" delete="0">
+                            <field name="date"/>
+                            <field name="payment_id" optional="show"/>
+                            <field name="partner_id" optional="show"/>
+                            <field name="payment_reference"/>
+                            <field name="invoice_names" optional="show"/>
+                            <field name="customer_payment" sum="Total"/>
+                            <field name="customer_iva" sum="Total"/>
+                            <field name="supplier_payment" sum="Total"/>
+                            <field name="supplier_iva" sum="Total"/>
+                            <field name="iva_difference" sum="Total"/>
+                            <field name="utility" sum="Total"/>
+                        </list>
+                    </field>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_matchconta_iva_utility_report" model="ir.actions.act_window">
+        <field name="name">IVA Utility Report</field>
+        <field name="res_model">matchconta.iva.utility.report.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">current</field>
+    </record>
+
+    <menuitem id="menu_matchconta_root" name="MatchConta" sequence="10"/>
+    <menuitem
+        id="menu_matchconta_iva_utility_report"
+        name="IVA Utility Report"
+        parent="menu_matchconta_root"
+        action="action_matchconta_iva_utility_report"
+        sequence="10"
+    />
+</odoo>
