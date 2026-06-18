@@ -9,7 +9,7 @@
                     <button
                         name="action_generate_report"
                         type="object"
-                        string="Generate Report"
+                        string="Generate Table"
                         class="btn-primary"
                     />
                 </header>
@@ -22,27 +22,35 @@
                         </group>
                         <group>
                             <field name="currency_id" invisible="1"/>
-                            <field name="total_customer_payment" readonly="1"/>
-                            <field name="total_customer_iva" readonly="1"/>
-                            <field name="total_supplier_payment" readonly="1"/>
-                            <field name="total_supplier_iva" readonly="1"/>
-                            <field name="total_iva_difference" readonly="1"/>
-                            <field name="total_utility" readonly="1"/>
+                            <field name="total_paid_amount" readonly="1"/>
+                            <field name="total_taxable_base_16" readonly="1"/>
+                            <field name="total_iva_16" readonly="1"/>
+                            <field name="total_taxable_base_8" readonly="1"/>
+                            <field name="total_iva_8" readonly="1"/>
+                            <field name="total_exempt_amount" readonly="1"/>
+                            <field name="total_other_taxable_base" readonly="1"/>
+                            <field name="total_other_iva" readonly="1"/>
+                            <field name="total_iva_amount" readonly="1"/>
                         </group>
                     </group>
                     <field name="line_ids" nolabel="1" readonly="1">
                         <list create="0" delete="0">
-                            <field name="date"/>
-                            <field name="payment_id" optional="show"/>
-                            <field name="partner_id" optional="show"/>
-                            <field name="payment_reference"/>
-                            <field name="invoice_names" optional="show"/>
-                            <field name="customer_payment" sum="Total"/>
-                            <field name="customer_iva" sum="Total"/>
-                            <field name="supplier_payment" sum="Total"/>
-                            <field name="supplier_iva" sum="Total"/>
-                            <field name="iva_difference" sum="Total"/>
-                            <field name="utility" sum="Total"/>
+                            <field name="partner_id"/>
+                            <field name="third_party_type"/>
+                            <field name="operation_type"/>
+                            <field name="rfc"/>
+                            <field name="country_code"/>
+                            <field name="document_names" optional="show"/>
+                            <field name="payment_references" optional="hide"/>
+                            <field name="paid_amount" sum="Total"/>
+                            <field name="taxable_base_16" sum="Total"/>
+                            <field name="iva_16" sum="Total"/>
+                            <field name="taxable_base_8" sum="Total"/>
+                            <field name="iva_8" sum="Total"/>
+                            <field name="exempt_amount" sum="Total"/>
+                            <field name="other_taxable_base" sum="Total"/>
+                            <field name="other_iva" sum="Total"/>
+                            <field name="total_iva" sum="Total"/>
                         </list>
                     </field>
                 </sheet>
