@@ -190,7 +190,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 ("date", ">=", date_from),
                 ("date", "<=", date_to),
                 ("move_id.state", "=", "posted"),
-                ("state", "in", ("in_process", "paid")),
+                ("state", "=", "posted"),
             ],
             order="date, id",
         )
