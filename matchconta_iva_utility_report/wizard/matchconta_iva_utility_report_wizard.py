@@ -444,6 +444,15 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         compute="_compute_report_period_label",
         readonly=True,
     )
+    transaction_type = fields.Selection(
+        selection=[
+            ("income", "Income"),
+            ("expense", "Expense"),
+            ("mixed", "Mixed"),
+        ],
+        compute="_compute_transaction_type",
+        readonly=True,
+    )
     date = fields.Date(required=True, readonly=True)
     payment_id = fields.Many2one("account.payment", readonly=True)
     partner_id = fields.Many2one("res.partner", readonly=True)
@@ -496,6 +505,18 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
             month_label = month_labels.get(line.report_month, "")
             year_label = str(line.report_year) if line.report_year else ""
             line.report_period_label = " ".join(filter(None, [month_label, year_label]))
+
+    @api.depends("customer_payment", "supplier_payment")
+    def _compute_transaction_type(self):
+        for line in self:
+            has_customer = not line.currency_id.is_zero(line.customer_payment)
+            has_supplier = not line.currency_id.is_zero(line.supplier_payment)
+            if has_customer and has_supplier:
+                line.transaction_type = "mixed"
+            elif has_customer:
+                line.transaction_type = "income"
+            else:
+                line.transaction_type = "expense"
 
 
 class MatchContaIvaUtilityReportDebug(models.TransientModel):
