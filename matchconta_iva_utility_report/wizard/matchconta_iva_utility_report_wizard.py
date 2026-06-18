@@ -120,7 +120,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             "view_mode": "list,form",
             "domain": [("wizard_id", "=", self.id)],
             "context": {
-                "search_default_group_by_partner": 1,
+                "search_default_group_by_payment_month": 1,
                 "default_wizard_id": self.id,
             },
             "target": "current",

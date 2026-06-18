@@ -89,10 +89,11 @@
                 <filter name="with_supplier" string="With Supplier" domain="[('supplier_payment', '!=', 0)]"/>
                 <filter name="current_year" string="Current Year" domain="[('report_year', '=', context_today().year)]"/>
                 <separator/>
+                <filter name="group_by_payment_month" string="Month" context="{'group_by': 'date:month'}"/>
                 <filter name="group_by_partner" string="Partner" context="{'group_by': 'partner_id'}"/>
                 <filter name="group_by_date" string="Date" context="{'group_by': 'date'}"/>
                 <filter name="group_by_company" string="Company" context="{'group_by': 'report_company_id'}"/>
-                <filter name="group_by_month" string="Month" context="{'group_by': 'report_month'}"/>
+                <filter name="group_by_report_month" string="Selected Month" context="{'group_by': 'report_month'}"/>
             </search>
         </field>
     </record>
