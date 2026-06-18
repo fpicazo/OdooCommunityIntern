@@ -155,24 +155,23 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 "iva_amount": 0.0,
             }
         )
-        counterpart_lines = payment.move_id.line_ids.filtered(
-            lambda line: line.account_id.account_type
-            in ("asset_receivable", "liability_payable")
-        )
+        payment_lines = payment.move_id.line_ids
+        partials = payment_lines.matched_debit_ids | payment_lines.matched_credit_ids
+        counterpart_lines = (partials.debit_move_id | partials.credit_move_id) - payment_lines
 
-        for line in counterpart_lines:
-            for partial in line.matched_debit_ids:
-                self._collect_partial_document(
-                    documents,
-                    partial.credit_move_id,
-                    partial.amount,
-                )
-            for partial in line.matched_credit_ids:
-                self._collect_partial_document(
-                    documents,
-                    partial.debit_move_id,
-                    partial.amount,
-                )
+        for counterpart_line in counterpart_lines:
+            related_partials = (counterpart_line.matched_debit_ids | counterpart_line.matched_credit_ids).filtered(
+                lambda partial: partial.debit_move_id in payment_lines
+                or partial.credit_move_id in payment_lines
+            )
+            paid_amount = sum(related_partials.mapped("amount"))
+            if not paid_amount:
+                continue
+            self._collect_partial_document(
+                documents,
+                counterpart_line,
+                paid_amount,
+            )
 
         currency = payment.company_id.currency_id
         for values in documents.values():
