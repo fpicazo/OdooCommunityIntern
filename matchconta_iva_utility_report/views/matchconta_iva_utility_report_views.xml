@@ -162,12 +162,20 @@
         <field name="target">current</field>
     </record>
 
+    <record id="action_matchconta_iva_utility_report_lines" model="ir.actions.act_window">
+        <field name="name">IVA Utility Reports</field>
+        <field name="res_model">matchconta.iva.utility.report.line</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_matchconta_iva_utility_report_line_search"/>
+        <field name="context">{"search_default_group_by_payment_month": 1}</field>
+    </record>
+
     <menuitem id="menu_matchconta_root" name="MatchConta" sequence="10"/>
     <menuitem
         id="menu_matchconta_iva_utility_report"
         name="IVA Utility Report"
         parent="menu_matchconta_root"
-        action="action_matchconta_iva_utility_report_wizard"
+        action="action_matchconta_iva_utility_report_lines"
         sequence="10"
     />
     <menuitem
