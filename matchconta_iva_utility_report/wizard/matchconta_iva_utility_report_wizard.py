@@ -451,6 +451,7 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
             ("mixed", "Mixed"),
         ],
         compute="_compute_transaction_type",
+        store=True,
         readonly=True,
     )
     date = fields.Date(required=True, readonly=True)
