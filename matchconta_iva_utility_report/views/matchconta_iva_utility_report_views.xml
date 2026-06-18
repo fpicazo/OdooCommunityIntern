@@ -167,7 +167,7 @@
         id="menu_matchconta_iva_utility_report"
         name="IVA Utility Report"
         parent="menu_matchconta_root"
-        action="action_matchconta_iva_utility_report_server"
+        action="action_matchconta_iva_utility_report_wizard"
         sequence="10"
     />
     <menuitem
