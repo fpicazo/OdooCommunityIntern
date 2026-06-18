@@ -78,6 +78,15 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         readonly=True,
     )
 
+    def name_get(self):
+        month_labels = dict(self._fields["month"].selection)
+        result = []
+        for wizard in self:
+            month_label = month_labels.get(wizard.month, "")
+            label = f"IVA Utility Report - {month_label} {wizard.year}".strip()
+            result.append((wizard.id, label))
+        return result
+
     @api.depends(
         "line_ids.customer_payment",
         "line_ids.customer_iva",
@@ -431,6 +440,10 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         related="wizard_id.year",
         readonly=True,
     )
+    report_period_label = fields.Char(
+        compute="_compute_report_period_label",
+        readonly=True,
+    )
     date = fields.Date(required=True, readonly=True)
     payment_id = fields.Many2one("account.payment", readonly=True)
     partner_id = fields.Many2one("res.partner", readonly=True)
@@ -475,6 +488,14 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         for line in self:
             line.iva_difference = line.customer_iva - line.supplier_iva
             line.utility = line.customer_payment - line.supplier_payment
+
+    @api.depends("report_month", "report_year")
+    def _compute_report_period_label(self):
+        month_labels = dict(self.env["matchconta.iva.utility.report.wizard"]._fields["month"].selection)
+        for line in self:
+            month_label = month_labels.get(line.report_month, "")
+            year_label = str(line.report_year) if line.report_year else ""
+            line.report_period_label = " ".join(filter(None, [month_label, year_label]))
 
 
 class MatchContaIvaUtilityReportDebug(models.TransientModel):
