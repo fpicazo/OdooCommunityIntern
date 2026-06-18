@@ -187,29 +187,30 @@
                 <sheet>
                     <div class="oe_title">
                         <h1>
-                            <field name="month" class="oe_inline"/>
-                            <field name="year" class="oe_inline"/>
+                            <field name="month" nolabel="1" class="oe_inline"/>
+                            <span class="mx-2"/>
+                            <field name="year" nolabel="1" class="oe_inline"/>
                         </h1>
                     </div>
-                    <group col="2">
+                    <group col="4">
                         <group>
                             <field name="company_id"/>
                         </group>
                     </group>
-                    <group col="2" string="Income and Expenses">
+                    <group col="4" string="Income and Expenses">
                         <field name="ingreso_declarado"/>
                         <field name="egreso_declarado"/>
                     </group>
-                    <group col="2" string="ISR (Income Tax)">
+                    <group col="4" string="ISR (Income Tax)">
                         <field name="isr_declarado"/>
                         <field name="isr_nomina_pagado"/>
                     </group>
-                    <group col="2" string="IVA (Value Added Tax)">
+                    <group col="4" string="IVA (Value Added Tax)">
                         <field name="iva_cobrado_declarado"/>
                         <field name="iva_pagado"/>
                         <field name="iva_pagable_declarado"/>
                     </group>
-                    <group col="2" string="Payroll">
+                    <group col="4" string="Payroll">
                         <field name="nomina_declarado"/>
                     </group>
                 </sheet>
