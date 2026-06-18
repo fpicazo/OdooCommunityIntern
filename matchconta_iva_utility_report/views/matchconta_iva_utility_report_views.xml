@@ -191,25 +191,25 @@
                             <field name="year" class="oe_inline"/>
                         </h1>
                     </div>
-                    <group>
-                        <group string="Company">
+                    <group col="2">
+                        <group>
                             <field name="company_id"/>
                         </group>
                     </group>
-                    <group string="Income and Expenses">
+                    <group col="2" string="Income and Expenses">
                         <field name="ingreso_declarado"/>
                         <field name="egreso_declarado"/>
                     </group>
-                    <group string="ISR (Income Tax)">
+                    <group col="2" string="ISR (Income Tax)">
                         <field name="isr_declarado"/>
                         <field name="isr_nomina_pagado"/>
                     </group>
-                    <group string="IVA (Value Added Tax)">
+                    <group col="2" string="IVA (Value Added Tax)">
                         <field name="iva_cobrado_declarado"/>
                         <field name="iva_pagado"/>
                         <field name="iva_pagable_declarado"/>
                     </group>
-                    <group string="Payroll">
+                    <group col="2" string="Payroll">
                         <field name="nomina_declarado"/>
                     </group>
                 </sheet>
