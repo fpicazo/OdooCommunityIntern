@@ -211,7 +211,70 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             "",
         ]
 
-        payments = self.env["account.payment"].search(
+        Payment = self.env["account.payment"]
+        payments_same_company = Payment.search([
+            ("company_id", "=", self.company_id.id),
+        ])
+        payments_same_company_period = Payment.search([
+            ("company_id", "=", self.company_id.id),
+            ("date", ">=", date_from),
+            ("date", "<=", date_to),
+        ])
+        payments_same_company_posted = Payment.search([
+            ("company_id", "=", self.company_id.id),
+            ("state", "=", "posted"),
+        ])
+        payments_same_period_any_company = Payment.search([
+            ("date", ">=", date_from),
+            ("date", "<=", date_to),
+            ("state", "=", "posted"),
+        ])
+        payments_with_posted_moves = Payment.search([
+            ("move_id.state", "=", "posted"),
+            ("state", "=", "posted"),
+        ])
+
+        debug_lines.extend(
+            [
+                "Stepwise counts:",
+                f"- Payments for selected company: {len(payments_same_company)}",
+                f"- Payments for selected company in period: {len(payments_same_company_period)}",
+                f"- Posted payments for selected company: {len(payments_same_company_posted)}",
+                f"- Posted payments in period for any company: {len(payments_same_period_any_company)}",
+                f"- Posted payments with posted journal entry: {len(payments_with_posted_moves)}",
+                "",
+            ]
+        )
+
+        if payments_same_company:
+            company_dates = payments_same_company.mapped("date")
+            company_dates = [payment_date for payment_date in company_dates if payment_date]
+            if company_dates:
+                debug_lines.append(
+                    f"Selected company payment date range: {min(company_dates)} to {max(company_dates)}"
+                )
+            company_states = sorted(set(payments_same_company.mapped("state")))
+            debug_lines.append(
+                f"Selected company payment states: {', '.join(company_states)}"
+            )
+        else:
+            debug_lines.append("Selected company has no account.payment records at all.")
+
+        if payments_same_period_any_company:
+            sample_companies = ", ".join(
+                sorted(
+                    set(
+                        payments_same_period_any_company[:10]
+                        .mapped("company_id.display_name")
+                    )
+                )
+            )
+            debug_lines.append(
+                f"Companies with posted payments in period: {sample_companies}"
+            )
+        debug_lines.append("")
+
+        payments = Payment.search(
             [
                 ("company_id", "=", self.company_id.id),
                 ("date", ">=", date_from),
