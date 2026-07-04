@@ -224,6 +224,55 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         document_bucket["move"] = move
         document_bucket["payment_amount"] += abs(amount)
 
+    def _get_iva_no_acreditable_entries(self, date_from, date_to):
+        self.ensure_one()
+        currency = self.company_id.currency_id
+        move_lines = self.env["account.move.line"].search(
+            [
+                ("company_id", "=", self.company_id.id),
+                ("date", ">=", date_from),
+                ("date", "<=", date_to),
+                ("parent_state", "=", "posted"),
+                ("move_id.move_type", "=", "entry"),
+                "|",
+                ("account_id.name", "ilike", "IVA no acreditable"),
+                ("name", "ilike", "IVA no acreditable"),
+            ],
+            order="date, move_id, id",
+        )
+
+        entries = defaultdict(
+            lambda: {
+                "move": self.env["account.move"],
+                "partner": self.env["res.partner"],
+                "date": False,
+                "amount": 0.0,
+            }
+        )
+
+        for move_line in move_lines:
+            bucket = entries[move_line.move_id.id]
+            bucket["move"] = move_line.move_id
+            bucket["partner"] = move_line.partner_id or move_line.move_id.partner_id
+            bucket["date"] = move_line.date
+            bucket["amount"] += move_line.debit - move_line.credit
+
+        result = []
+        for values in entries.values():
+            amount = currency.round(values["amount"])
+            if currency.is_zero(amount):
+                continue
+            values["amount"] = amount
+            result.append(values)
+
+        return sorted(
+            result,
+            key=lambda values: (
+                values["date"] or date.min,
+                values["move"].id,
+            ),
+        )
+
     def action_generate_report(self):
         self.ensure_one()
         date_from, date_to = self._get_period_dates()
@@ -398,6 +447,30 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             )
             lines_created += 1
 
+        iva_no_acreditable_entries = self._get_iva_no_acreditable_entries(
+            date_from,
+            date_to,
+        )
+        debug_lines.append(
+            f"IVA no acreditable journal entries found: {len(iva_no_acreditable_entries)}"
+        )
+        for entry in iva_no_acreditable_entries:
+            move = entry["move"]
+            line_commands.append(
+                (
+                    0,
+                    0,
+                    {
+                        "date": entry["date"],
+                        "partner_id": entry["partner"].id,
+                        "payment_reference": move.ref or "IVA no acreditable",
+                        "invoice_names": move.name,
+                        "iva_no_acreditable": entry["amount"],
+                    },
+                )
+            )
+            lines_created += 1
+
         if line_commands:
             self.write({"line_ids": line_commands})
             return self._get_report_lines_action()
@@ -471,6 +544,7 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
             ("income", "Income"),
             ("expense", "Expense"),
             ("mixed", "Mixed"),
+            ("adjustment", "Adjustment"),
         ],
         compute="_compute_transaction_type",
         store=True,
@@ -545,10 +619,9 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         compute="_compute_declared_amounts",
         readonly=True,
     )
-    period_iva_no_acreditable = fields.Monetary(
-        string="Period Non-creditable IVA",
+    iva_no_acreditable = fields.Monetary(
+        string="IVA No Acreditable",
         currency_field="currency_id",
-        related="wizard_id.period_iva_no_acreditable",
         readonly=True,
     )
     declared_nomina = fields.Monetary(
@@ -583,15 +656,18 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
             year_label = str(line.report_year) if line.report_year else ""
             line.report_period_label = " ".join(filter(None, [month_label, year_label]))
 
-    @api.depends("customer_payment", "supplier_payment")
+    @api.depends("customer_payment", "supplier_payment", "iva_no_acreditable")
     def _compute_transaction_type(self):
         for line in self:
             has_customer = not line.currency_id.is_zero(line.customer_payment)
             has_supplier = not line.currency_id.is_zero(line.supplier_payment)
+            has_adjustment = not line.currency_id.is_zero(line.iva_no_acreditable)
             if has_customer and has_supplier:
                 line.transaction_type = "mixed"
             elif has_customer:
                 line.transaction_type = "income"
+            elif has_adjustment:
+                line.transaction_type = "adjustment"
             else:
                 line.transaction_type = "expense"
 

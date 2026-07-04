@@ -42,6 +42,7 @@
                             <field name="customer_iva" sum="Total"/>
                             <field name="supplier_payment" sum="Total"/>
                             <field name="supplier_iva" sum="Total"/>
+                            <field name="iva_no_acreditable" sum="Total"/>
                             <field name="iva_difference" sum="Total"/>
                             <field name="utility" sum="Total"/>
                         </list>
@@ -59,10 +60,13 @@
                 <field name="date"/>
                 <field name="transaction_type"/>
                 <field name="partner_id"/>
+                <field name="payment_reference" optional="show"/>
+                <field name="invoice_names" optional="show"/>
                 <field name="customer_payment" sum="Total"/>
                 <field name="customer_iva" sum="Total"/>
                 <field name="supplier_payment" sum="Total"/>
                 <field name="supplier_iva" sum="Total"/>
+                <field name="iva_no_acreditable" sum="Total"/>
                 <field name="iva_difference" sum="Total"/>
                 <field name="utility" sum="Total"/>
                 <field name="declared_ingreso" optional="show"/>
@@ -71,7 +75,6 @@
                 <field name="declared_iva_cobrado" optional="show"/>
                 <field name="declared_iva_pagado" optional="show"/>
                 <field name="declared_iva_pagable" optional="show"/>
-                <field name="period_iva_no_acreditable" optional="show"/>
                 <field name="declared_nomina" optional="show"/>
                 <field name="declared_isr_nomina_pagado" optional="show"/>
             </list>
@@ -95,7 +98,7 @@
                 <filter name="with_supplier" string="With Supplier" domain="[('supplier_payment', '!=', 0)]"/>
                 <filter name="current_year" string="Current Year" domain="[('report_year', '=', context_today().year)]"/>
                 <separator/>
-                <filter name="group_by_transaction_type" string="Income/Expense" context="{'group_by': 'transaction_type'}"/>
+                <filter name="group_by_transaction_type" string="Type" context="{'group_by': 'transaction_type'}"/>
                 <filter name="group_by_payment_month" string="Month" context="{'group_by': 'date:month'}"/>
                 <filter name="group_by_partner" string="Partner" context="{'group_by': 'partner_id'}"/>
                 <filter name="group_by_date" string="Date" context="{'group_by': 'date'}"/>
@@ -135,7 +138,7 @@
                             <field name="declared_iva_cobrado"/>
                             <field name="declared_iva_pagado"/>
                             <field name="declared_iva_pagable"/>
-                            <field name="period_iva_no_acreditable"/>
+                            <field name="iva_no_acreditable"/>
                             <field name="declared_nomina"/>
                             <field name="declared_isr_nomina_pagado"/>
                         </group>
