@@ -27,6 +27,7 @@
                             <field name="total_supplier_payment" readonly="1"/>
                             <field name="total_supplier_iva" readonly="1"/>
                             <field name="period_iva_no_acreditable" readonly="1"/>
+                            <field name="period_depreciation" readonly="1"/>
                             <field name="total_iva_difference" readonly="1"/>
                             <field name="total_utility" readonly="1"/>
                         </group>
@@ -43,6 +44,7 @@
                             <field name="supplier_payment" sum="Total"/>
                             <field name="supplier_iva" sum="Total"/>
                             <field name="iva_no_acreditable" sum="Total"/>
+                            <field name="depreciation_amount" sum="Total"/>
                             <field name="iva_difference" sum="Total"/>
                             <field name="utility" sum="Total"/>
                         </list>
@@ -67,6 +69,7 @@
                 <field name="supplier_payment" sum="Total"/>
                 <field name="supplier_iva" sum="Total"/>
                 <field name="iva_no_acreditable" sum="Total"/>
+                <field name="depreciation_amount" sum="Total"/>
                 <field name="iva_difference" sum="Total"/>
                 <field name="utility" sum="Total"/>
                 <field name="declared_ingreso" optional="show"/>
@@ -139,6 +142,7 @@
                             <field name="declared_iva_pagado"/>
                             <field name="declared_iva_pagable"/>
                             <field name="iva_no_acreditable"/>
+                            <field name="depreciation_amount"/>
                             <field name="declared_nomina"/>
                             <field name="declared_isr_nomina_pagado"/>
                         </group>

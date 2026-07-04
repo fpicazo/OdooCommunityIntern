@@ -73,6 +73,12 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         compute="_compute_period_iva_no_acreditable",
         readonly=True,
     )
+    period_depreciation = fields.Monetary(
+        string="Period Depreciation",
+        currency_field="currency_id",
+        compute="_compute_period_depreciation",
+        readonly=True,
+    )
     total_iva_difference = fields.Monetary(
         currency_field="currency_id",
         compute="_compute_totals",
@@ -98,6 +104,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         "line_ids.customer_iva",
         "line_ids.supplier_payment",
         "line_ids.supplier_iva",
+        "line_ids.depreciation_amount",
     )
     def _compute_totals(self):
         for wizard in self:
@@ -109,7 +116,9 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 wizard.total_customer_iva - wizard.total_supplier_iva
             )
             wizard.total_utility = (
-                wizard.total_customer_payment - wizard.total_supplier_payment
+                wizard.total_customer_payment
+                - wizard.total_supplier_payment
+                - sum(wizard.line_ids.mapped("depreciation_amount"))
             )
 
     @api.depends("company_id", "month", "year")
@@ -127,6 +136,16 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 (wizard.company_id.id, str(wizard.month).zfill(2), wizard.year),
                 0.0,
             )
+
+    @api.depends("company_id", "month", "year")
+    def _compute_period_depreciation(self):
+        for wizard in self:
+            wizard.period_depreciation = 0.0
+            if not wizard.company_id or not wizard.month or not wizard.year:
+                continue
+            date_from, date_to = wizard._get_period_dates()
+            entries = wizard._get_depreciation_entries(date_from, date_to)
+            wizard.period_depreciation = sum(entry["amount"] for entry in entries)
 
     def _get_period_dates(self):
         self.ensure_one()
@@ -256,6 +275,55 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             bucket["partner"] = move_line.partner_id or move_line.move_id.partner_id
             bucket["date"] = move_line.date
             bucket["amount"] += move_line.debit - move_line.credit
+
+        result = []
+        for values in entries.values():
+            amount = currency.round(values["amount"])
+            if currency.is_zero(amount):
+                continue
+            values["amount"] = amount
+            result.append(values)
+
+        return sorted(
+            result,
+            key=lambda values: (
+                values["date"] or date.min,
+                values["move"].id,
+            ),
+        )
+
+    def _get_depreciation_entries(self, date_from, date_to):
+        self.ensure_one()
+        currency = self.company_id.currency_id
+        move_lines = self.env["account.move.line"].search(
+            [
+                ("company_id", "=", self.company_id.id),
+                ("date", ">=", date_from),
+                ("date", "<=", date_to),
+                ("parent_state", "=", "posted"),
+                ("move_id.move_type", "=", "entry"),
+                ("debit", ">", 0),
+                ("account_id.name", "ilike", "Depreci"),
+                ("account_id.name", "not ilike", "acumul"),
+            ],
+            order="date, move_id, id",
+        )
+
+        entries = defaultdict(
+            lambda: {
+                "move": self.env["account.move"],
+                "partner": self.env["res.partner"],
+                "date": False,
+                "amount": 0.0,
+            }
+        )
+
+        for move_line in move_lines:
+            bucket = entries[move_line.move_id.id]
+            bucket["move"] = move_line.move_id
+            bucket["partner"] = move_line.partner_id or move_line.move_id.partner_id
+            bucket["date"] = move_line.date
+            bucket["amount"] += move_line.debit
 
         result = []
         for values in entries.values():
@@ -471,6 +539,30 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             )
             lines_created += 1
 
+        depreciation_entries = self._get_depreciation_entries(
+            date_from,
+            date_to,
+        )
+        debug_lines.append(
+            f"Depreciation journal entries found: {len(depreciation_entries)}"
+        )
+        for entry in depreciation_entries:
+            move = entry["move"]
+            line_commands.append(
+                (
+                    0,
+                    0,
+                    {
+                        "date": entry["date"],
+                        "partner_id": entry["partner"].id,
+                        "payment_reference": move.ref or "Depreciation",
+                        "invoice_names": move.name,
+                        "depreciation_amount": entry["amount"],
+                    },
+                )
+            )
+            lines_created += 1
+
         if line_commands:
             self.write({"line_ids": line_commands})
             return self._get_report_lines_action()
@@ -624,10 +716,21 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         currency_field="currency_id",
         readonly=True,
     )
+    depreciation_amount = fields.Monetary(
+        string="Depreciation",
+        currency_field="currency_id",
+        readonly=True,
+    )
     period_iva_no_acreditable = fields.Monetary(
         string="Period Non-creditable IVA",
         currency_field="currency_id",
         related="wizard_id.period_iva_no_acreditable",
+        readonly=True,
+    )
+    period_depreciation = fields.Monetary(
+        string="Period Depreciation",
+        currency_field="currency_id",
+        related="wizard_id.period_depreciation",
         readonly=True,
     )
     declared_nomina = fields.Monetary(
@@ -648,11 +751,16 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         "supplier_iva",
         "customer_payment",
         "supplier_payment",
+        "depreciation_amount",
     )
     def _compute_derived_amounts(self):
         for line in self:
             line.iva_difference = line.customer_iva - line.supplier_iva
-            line.utility = line.customer_payment - line.supplier_payment
+            line.utility = (
+                line.customer_payment
+                - line.supplier_payment
+                - line.depreciation_amount
+            )
 
     @api.depends("report_month", "report_year")
     def _compute_report_period_label(self):
@@ -662,17 +770,23 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
             year_label = str(line.report_year) if line.report_year else ""
             line.report_period_label = " ".join(filter(None, [month_label, year_label]))
 
-    @api.depends("customer_payment", "supplier_payment", "iva_no_acreditable")
+    @api.depends(
+        "customer_payment",
+        "supplier_payment",
+        "iva_no_acreditable",
+        "depreciation_amount",
+    )
     def _compute_transaction_type(self):
         for line in self:
             has_customer = not line.currency_id.is_zero(line.customer_payment)
             has_supplier = not line.currency_id.is_zero(line.supplier_payment)
             has_adjustment = not line.currency_id.is_zero(line.iva_no_acreditable)
+            has_depreciation = not line.currency_id.is_zero(line.depreciation_amount)
             if has_customer and has_supplier:
                 line.transaction_type = "mixed"
             elif has_customer:
                 line.transaction_type = "income"
-            elif has_adjustment:
+            elif has_adjustment or has_depreciation:
                 line.transaction_type = "adjustment"
             else:
                 line.transaction_type = "expense"
