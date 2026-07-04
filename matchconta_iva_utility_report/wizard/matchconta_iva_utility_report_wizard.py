@@ -624,6 +624,12 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         currency_field="currency_id",
         readonly=True,
     )
+    period_iva_no_acreditable = fields.Monetary(
+        string="Period Non-creditable IVA",
+        currency_field="currency_id",
+        related="wizard_id.period_iva_no_acreditable",
+        readonly=True,
+    )
     declared_nomina = fields.Monetary(
         string="Declared Payroll",
         currency_field="currency_id",
