@@ -26,6 +26,7 @@
                             <field name="total_customer_iva" readonly="1"/>
                             <field name="total_supplier_payment" readonly="1"/>
                             <field name="total_supplier_iva" readonly="1"/>
+                            <field name="period_iva_no_acreditable" readonly="1"/>
                             <field name="total_iva_difference" readonly="1"/>
                             <field name="total_utility" readonly="1"/>
                         </group>
@@ -70,6 +71,7 @@
                 <field name="declared_iva_cobrado" optional="show"/>
                 <field name="declared_iva_pagado" optional="show"/>
                 <field name="declared_iva_pagable" optional="show"/>
+                <field name="period_iva_no_acreditable" optional="show"/>
                 <field name="declared_nomina" optional="show"/>
                 <field name="declared_isr_nomina_pagado" optional="show"/>
             </list>
@@ -133,6 +135,7 @@
                             <field name="declared_iva_cobrado"/>
                             <field name="declared_iva_pagado"/>
                             <field name="declared_iva_pagable"/>
+                            <field name="period_iva_no_acreditable"/>
                             <field name="declared_nomina"/>
                             <field name="declared_isr_nomina_pagado"/>
                         </group>
@@ -228,6 +231,7 @@
                         <field name="iva_cobrado_declarado"/>
                         <field name="iva_pagado"/>
                         <field name="iva_pagable_declarado"/>
+                        <field name="iva_no_acreditable" readonly="1"/>
                     </group>
                     <group col="4" string="Payroll">
                         <field name="nomina_declarado"/>
@@ -251,6 +255,7 @@
                 <field name="iva_cobrado_declarado" sum="Total"/>
                 <field name="iva_pagado" sum="Total"/>
                 <field name="iva_pagable_declarado" sum="Total"/>
+                <field name="iva_no_acreditable" sum="Total"/>
                 <field name="nomina_declarado" sum="Total"/>
                 <field name="isr_nomina_pagado" sum="Total"/>
             </list>

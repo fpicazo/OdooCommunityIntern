@@ -67,6 +67,12 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         compute="_compute_totals",
         readonly=True,
     )
+    period_iva_no_acreditable = fields.Monetary(
+        string="Period Non-creditable IVA",
+        currency_field="currency_id",
+        compute="_compute_period_iva_no_acreditable",
+        readonly=True,
+    )
     total_iva_difference = fields.Monetary(
         currency_field="currency_id",
         compute="_compute_totals",
@@ -104,6 +110,22 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             )
             wizard.total_utility = (
                 wizard.total_customer_payment - wizard.total_supplier_payment
+            )
+
+    @api.depends("company_id", "month", "year")
+    def _compute_period_iva_no_acreditable(self):
+        period_keys = {
+            (wizard.company_id.id, str(wizard.month).zfill(2), wizard.year)
+            for wizard in self
+            if wizard.company_id and wizard.month and wizard.year
+        }
+        amount_map = self.env[
+            "matchconta.declared.amounts"
+        ]._get_iva_no_acreditable_amount_map(period_keys)
+        for wizard in self:
+            wizard.period_iva_no_acreditable = amount_map.get(
+                (wizard.company_id.id, str(wizard.month).zfill(2), wizard.year),
+                0.0,
             )
 
     def _get_period_dates(self):
@@ -521,6 +543,12 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         string="Declared IVA Payable",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        readonly=True,
+    )
+    period_iva_no_acreditable = fields.Monetary(
+        string="Period Non-creditable IVA",
+        currency_field="currency_id",
+        related="wizard_id.period_iva_no_acreditable",
         readonly=True,
     )
     declared_nomina = fields.Monetary(
