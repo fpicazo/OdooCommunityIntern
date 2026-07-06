@@ -72,6 +72,10 @@ class MatchContaDeclaredAmounts(models.Model):
         string="Paid Payroll ISR",
         help="ISR withheld and paid from payroll",
     )
+    perdidas_fiscales_aplicadas_periodo = fields.Float(
+        string="Tax Losses Applied in Period",
+        help="Tax losses from prior fiscal years applied in the selected period.",
+    )
     iva_no_acreditable = fields.Float(
         string="Non-creditable IVA",
         compute="_compute_iva_no_acreditable",

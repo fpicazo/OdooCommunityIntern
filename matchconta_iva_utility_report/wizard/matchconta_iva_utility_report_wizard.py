@@ -745,6 +745,12 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         compute="_compute_declared_amounts",
         readonly=True,
     )
+    declared_perdidas_fiscales_aplicadas_periodo = fields.Monetary(
+        string="Declared Prior-Year Tax Losses Applied",
+        currency_field="currency_id",
+        compute="_compute_declared_amounts",
+        readonly=True,
+    )
 
     @api.depends(
         "customer_iva",
@@ -832,6 +838,9 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
             line.declared_iva_pagable = declared.iva_pagable_declarado if declared else 0.0
             line.declared_nomina = declared.nomina_declarado if declared else 0.0
             line.declared_isr_nomina_pagado = declared.isr_nomina_pagado if declared else 0.0
+            line.declared_perdidas_fiscales_aplicadas_periodo = (
+                declared.perdidas_fiscales_aplicadas_periodo if declared else 0.0
+            )
 
 
 class MatchContaIvaUtilityReportDebug(models.TransientModel):

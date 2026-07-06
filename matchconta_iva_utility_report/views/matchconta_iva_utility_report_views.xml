@@ -80,6 +80,7 @@
                 <field name="declared_iva_pagable" optional="show"/>
                 <field name="declared_nomina" optional="show"/>
                 <field name="declared_isr_nomina_pagado" optional="show"/>
+                <field name="declared_perdidas_fiscales_aplicadas_periodo" optional="show"/>
             </list>
         </field>
     </record>
@@ -145,6 +146,7 @@
                             <field name="depreciation_amount"/>
                             <field name="declared_nomina"/>
                             <field name="declared_isr_nomina_pagado"/>
+                            <field name="declared_perdidas_fiscales_aplicadas_periodo"/>
                         </group>
                     </group>
                 </sheet>
@@ -233,6 +235,7 @@
                     <group col="4" string="ISR (Income Tax)">
                         <field name="isr_declarado"/>
                         <field name="isr_nomina_pagado"/>
+                        <field name="perdidas_fiscales_aplicadas_periodo"/>
                     </group>
                     <group col="4" string="IVA (Value Added Tax)">
                         <field name="iva_cobrado_declarado"/>
@@ -265,6 +268,7 @@
                 <field name="iva_no_acreditable" sum="Total"/>
                 <field name="nomina_declarado" sum="Total"/>
                 <field name="isr_nomina_pagado" sum="Total"/>
+                <field name="perdidas_fiscales_aplicadas_periodo" sum="Total"/>
             </list>
         </field>
     </record>
