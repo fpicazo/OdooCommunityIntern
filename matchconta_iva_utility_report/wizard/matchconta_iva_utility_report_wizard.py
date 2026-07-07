@@ -679,36 +679,48 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         string="Declared Income",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_egreso = fields.Monetary(
         string="Declared Expense",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_isr = fields.Monetary(
         string="Declared ISR",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_iva_cobrado = fields.Monetary(
         string="Declared IVA Collected",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_iva_pagado = fields.Monetary(
         string="Declared IVA Paid",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_iva_pagable = fields.Monetary(
         string="Declared IVA Payable",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     iva_no_acreditable = fields.Monetary(
@@ -737,18 +749,24 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         string="Declared Payroll",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_isr_nomina_pagado = fields.Monetary(
         string="Declared Payroll ISR Paid",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
     declared_perdidas_fiscales_aplicadas_periodo = fields.Monetary(
         string="Declared Prior-Year Tax Losses Applied",
         currency_field="currency_id",
         compute="_compute_declared_amounts",
+        store=True,
+        group_operator="max",
         readonly=True,
     )
 
