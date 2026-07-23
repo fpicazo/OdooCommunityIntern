@@ -104,6 +104,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         "line_ids.customer_iva",
         "line_ids.supplier_payment",
         "line_ids.supplier_iva",
+        "line_ids.payroll_amount",
         "line_ids.depreciation_amount",
     )
     def _compute_totals(self):
@@ -116,8 +117,9 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                 wizard.total_customer_iva - wizard.total_supplier_iva
             )
             wizard.total_utility = (
-                wizard.total_customer_payment
-                - wizard.total_supplier_payment
+                (wizard.total_customer_payment - wizard.total_customer_iva)
+                - (wizard.total_supplier_payment - wizard.total_supplier_iva)
+                - sum(wizard.line_ids.mapped("payroll_amount"))
                 - sum(wizard.line_ids.mapped("depreciation_amount"))
             )
 
@@ -563,6 +565,29 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             )
             lines_created += 1
 
+        declared_amount = self.env["matchconta.declared.amounts"].search(
+            [
+                ("company_id", "=", self.company_id.id),
+                ("month", "=", str(self.month).zfill(2)),
+                ("year", "=", self.year),
+            ],
+            limit=1,
+        )
+        payroll_amount = currency.round(declared_amount.nomina_declarado)
+        if not currency.is_zero(payroll_amount):
+            line_commands.append(
+                (
+                    0,
+                    0,
+                    {
+                        "date": date_to,
+                        "payment_reference": "Payroll",
+                        "payroll_amount": payroll_amount,
+                    },
+                )
+            )
+            lines_created += 1
+
         if line_commands:
             self.write({"line_ids": line_commands})
             return self._get_report_lines_action()
@@ -733,6 +758,11 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         currency_field="currency_id",
         readonly=True,
     )
+    payroll_amount = fields.Monetary(
+        string="Payroll",
+        currency_field="currency_id",
+        readonly=True,
+    )
     period_iva_no_acreditable = fields.Monetary(
         string="Period Non-creditable IVA",
         currency_field="currency_id",
@@ -775,14 +805,16 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         "supplier_iva",
         "customer_payment",
         "supplier_payment",
+        "payroll_amount",
         "depreciation_amount",
     )
     def _compute_derived_amounts(self):
         for line in self:
             line.iva_difference = line.customer_iva - line.supplier_iva
             line.utility = (
-                line.customer_payment
-                - line.supplier_payment
+                (line.customer_payment - line.customer_iva)
+                - (line.supplier_payment - line.supplier_iva)
+                - line.payroll_amount
                 - line.depreciation_amount
             )
 
@@ -798,13 +830,17 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         "customer_payment",
         "supplier_payment",
         "iva_no_acreditable",
+        "payroll_amount",
         "depreciation_amount",
     )
     def _compute_transaction_type(self):
         for line in self:
             has_customer = not line.currency_id.is_zero(line.customer_payment)
             has_supplier = not line.currency_id.is_zero(line.supplier_payment)
-            has_adjustment = not line.currency_id.is_zero(line.iva_no_acreditable)
+            has_adjustment = (
+                not line.currency_id.is_zero(line.iva_no_acreditable)
+                or not line.currency_id.is_zero(line.payroll_amount)
+            )
             has_depreciation = not line.currency_id.is_zero(line.depreciation_amount)
             if has_customer and has_supplier:
                 line.transaction_type = "mixed"
