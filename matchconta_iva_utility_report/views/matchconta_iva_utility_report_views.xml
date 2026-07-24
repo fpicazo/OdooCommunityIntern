@@ -61,7 +61,7 @@
         <field name="name">matchconta.iva.utility.report.line.list</field>
         <field name="model">matchconta.iva.utility.report.line</field>
         <field name="arch" type="xml">
-            <list create="0" delete="0" edit="0">
+            <list create="0" delete="1" edit="0">
                 <field name="date"/>
                 <field name="transaction_type"/>
                 <field name="partner_id"/>
@@ -121,7 +121,7 @@
         <field name="name">matchconta.iva.utility.report.line.form</field>
         <field name="model">matchconta.iva.utility.report.line</field>
         <field name="arch" type="xml">
-            <form string="IVA Utility Report Line" create="0" edit="0" delete="0">
+            <form string="IVA Utility Report Line" create="0" edit="0" delete="1">
                 <sheet>
                     <group>
                         <group>

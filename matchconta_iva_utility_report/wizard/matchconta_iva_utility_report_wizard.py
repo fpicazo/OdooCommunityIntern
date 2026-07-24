@@ -357,6 +357,18 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         self.ensure_one()
         date_from, date_to = self._get_period_dates()
 
+        # A period should have only one generated report per company.  Each use
+        # of the menu creates a new transient wizard, so clearing only this
+        # wizard's lines leaves the previously generated report visible.
+        previous_reports = self.search(
+            [
+                ("id", "!=", self.id),
+                ("company_id", "=", self.company_id.id),
+                ("month", "=", self.month),
+                ("year", "=", self.year),
+            ]
+        )
+        previous_reports.unlink()
         self.line_ids.unlink()
 
         debug_lines = [
