@@ -24,6 +24,7 @@
                             <field name="currency_id" invisible="1"/>
                             <field name="total_customer_payment" readonly="1"/>
                             <field name="total_customer_iva" readonly="1"/>
+                            <field name="total_customer_payment_with_tax_excl_iva" readonly="1"/>
                             <field name="total_supplier_payment" readonly="1"/>
                             <field name="total_supplier_iva" readonly="1"/>
                             <field name="period_iva_no_acreditable" readonly="1"/>
@@ -41,6 +42,7 @@
                             <field name="invoice_names" optional="show"/>
                             <field name="customer_payment" sum="Total"/>
                             <field name="customer_iva" sum="Total"/>
+                            <field name="customer_payment_with_tax_excl_iva" sum="Total"/>
                             <field name="supplier_payment" sum="Total"/>
                             <field name="supplier_iva" sum="Total"/>
                             <field name="iva_no_acreditable" sum="Total"/>
@@ -67,6 +69,7 @@
                 <field name="invoice_names" optional="show"/>
                 <field name="customer_payment" sum="Total"/>
                 <field name="customer_iva" sum="Total"/>
+                <field name="customer_payment_with_tax_excl_iva" sum="Total"/>
                 <field name="supplier_payment" sum="Total"/>
                 <field name="supplier_iva" sum="Total"/>
                 <field name="iva_no_acreditable" sum="Total"/>
@@ -134,6 +137,7 @@
                             <field name="report_period_label" string="Period"/>
                             <field name="customer_payment"/>
                             <field name="customer_iva"/>
+                            <field name="customer_payment_with_tax_excl_iva"/>
                             <field name="supplier_payment"/>
                             <field name="supplier_iva"/>
                             <field name="iva_difference"/>

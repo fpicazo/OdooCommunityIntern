@@ -57,6 +57,12 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         compute="_compute_totals",
         readonly=True,
     )
+    total_customer_payment_with_tax_excl_iva = fields.Monetary(
+        string="Payments Received with Tax (Excl. IVA)",
+        currency_field="currency_id",
+        compute="_compute_totals",
+        readonly=True,
+    )
     total_supplier_payment = fields.Monetary(
         currency_field="currency_id",
         compute="_compute_totals",
@@ -102,6 +108,7 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
     @api.depends(
         "line_ids.customer_payment",
         "line_ids.customer_iva",
+        "line_ids.customer_payment_with_tax_excl_iva",
         "line_ids.supplier_payment",
         "line_ids.supplier_iva",
         "line_ids.payroll_amount",
@@ -111,6 +118,9 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
         for wizard in self:
             wizard.total_customer_payment = sum(wizard.line_ids.mapped("customer_payment"))
             wizard.total_customer_iva = sum(wizard.line_ids.mapped("customer_iva"))
+            wizard.total_customer_payment_with_tax_excl_iva = sum(
+                wizard.line_ids.mapped("customer_payment_with_tax_excl_iva")
+            )
             wizard.total_supplier_payment = sum(wizard.line_ids.mapped("supplier_payment"))
             wizard.total_supplier_iva = sum(wizard.line_ids.mapped("supplier_iva"))
             wizard.total_iva_difference = (
@@ -472,6 +482,13 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
             customer_iva = currency.round(
                 sum(document["iva_amount"] for document in sale_documents)
             )
+            customer_payment_with_tax_excl_iva = currency.round(
+                sum(
+                    document["payment_amount"] - document["iva_amount"]
+                    for document in sale_documents
+                    if not currency.is_zero(document["iva_amount"])
+                )
+            )
             supplier_payment = currency.round(
                 sum(document["payment_amount"] for document in purchase_documents)
             )
@@ -510,6 +527,9 @@ class MatchContaIvaUtilityReportWizard(models.TransientModel):
                         "invoice_names": invoice_names,
                         "customer_payment": customer_payment,
                         "customer_iva": customer_iva,
+                        "customer_payment_with_tax_excl_iva": (
+                            customer_payment_with_tax_excl_iva
+                        ),
                         "supplier_payment": supplier_payment,
                         "supplier_iva": supplier_iva,
                     },
@@ -677,6 +697,11 @@ class MatchContaIvaUtilityReportLine(models.TransientModel):
         readonly=True,
     )
     customer_iva = fields.Monetary(
+        currency_field="currency_id",
+        readonly=True,
+    )
+    customer_payment_with_tax_excl_iva = fields.Monetary(
+        string="Payments Received with Tax (Excl. IVA)",
         currency_field="currency_id",
         readonly=True,
     )

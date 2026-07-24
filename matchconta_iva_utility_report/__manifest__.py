@@ -1,6 +1,6 @@
 {
     "name": "MatchConta IVA Utility Report",
-    "version": "18.0.1.0.0",
+    "version": "18.0.1.1.0",
     "summary": "Monthly client/vendor payment and IVA utility report",
     "category": "Accounting/Accounting",
     "author": "OpenAI",
